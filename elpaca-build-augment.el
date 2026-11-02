@@ -73,8 +73,8 @@
   :group 'elpaca
   :prefix "elpaca-build-augment-")
 
-(defcustom elpaca-build-augment-data-dir
-  (expand-file-name "elpaca-build-augment/" user-emacs-directory)
+(defcustom elpaca-build-augment-cache-dir
+  (expand-file-name "elpaca-build-augment-cache/" user-emacs-directory)
   "Directory holding cached ELPA metadata snapshots.
 Lives under `user-emacs-directory' (not under the package's build
 dir) so it survives package upgrades.  Populated on first use by
@@ -93,7 +93,7 @@ fetching from upstream; refreshable via `elpaca-build-augment-refresh'."
      :file "nongnu-elpa-packages"
      :url "https://cgit.git.savannah.gnu.org/cgit/emacs/nongnu.git/plain/elpa-packages"))
   "Alist of (LABEL PLIST) describing ELPA metadata sources.
-PLIST keys: :file (basename cached under `elpaca-build-augment-data-dir')
+PLIST keys: :file (basename cached under `elpaca-build-augment-cache-dir')
 and :url (upstream fetch location)."
   :type '(alist :key-type symbol :value-type plist))
 
@@ -125,7 +125,7 @@ Populated lazily by `elpaca-build-augment--load-index'.")
   "Non-nil if every configured source has a cached file on disk."
   (cl-every (lambda (src)
               (file-readable-p (expand-file-name (plist-get (cdr src) :file)
-                                                 elpaca-build-augment-data-dir)))
+                                                 elpaca-build-augment-cache-dir)))
             elpaca-build-augment-sources))
 
 (defun elpaca-build-augment--load-index ()
@@ -138,7 +138,7 @@ ships no metadata, only the elisp that fetches and caches it."
   (setq elpaca-build-augment--index nil)
   (dolist (src elpaca-build-augment-sources)
     (let ((path (expand-file-name (plist-get (cdr src) :file)
-                                  elpaca-build-augment-data-dir)))
+                                  elpaca-build-augment-cache-dir)))
       (when (file-readable-p path)
         (dolist (entry (with-temp-buffer
                          (insert-file-contents path)
@@ -400,11 +400,11 @@ build pipeline."
 (defun elpaca-build-augment-refresh ()
   "Re-download the bundled elpa-packages snapshots from upstream."
   (interactive)
-  (make-directory elpaca-build-augment-data-dir t)
+  (make-directory elpaca-build-augment-cache-dir t)
   (dolist (src elpaca-build-augment-sources)
     (let* ((plist (cdr src))
            (dest (expand-file-name (plist-get plist :file)
-                                   elpaca-build-augment-data-dir))
+                                   elpaca-build-augment-cache-dir))
            (url (plist-get plist :url)))
       (message "elpaca-build-augment: fetching %s..." url)
       (url-copy-file url dest 'ok-if-already-exists)))
