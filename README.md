@@ -151,11 +151,13 @@ the hook sees the field is set and skips the package.
   `epdfinfo`, vterm's module, irony-mode's server) are installed as elisp only,
   same as under vanilla Elpaca and under `package.el`. You'll still need the
   package's own `M-x pdf-tools-install` / equivalent plus the system packages.
+
 - GNU ELPA `:core` packages (bind-key, eglot, eldoc, erc, …) are copies of
   files inside Emacs's own source tree, not independent repos. There is nothing
   for Elpaca to clone, so this library can't install them from source. You
   already have them bundled with Emacs anyway; if you specifically want the
   ELPA-newer version, use `:type tar :inherit elpaca-menu-gnu-elpa`.
+
 
 ## Caveat: install-time filesystem scan
 
