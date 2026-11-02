@@ -83,7 +83,7 @@ below).
 ;; run the body (`-enable'), and only then let evaluation continue.
 (elpaca (elpaca-build-augment
          :host github
-         :repo "YOURNAME/elpaca-build-augment"   ; swap in your own URL
+         :repo "jam1015/elpaca-build-augment"
          :wait t)
   (elpaca-build-augment-enable))
 
