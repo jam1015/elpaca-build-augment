@@ -4,7 +4,7 @@
 
 ;; Author: Jordan Mandel
 ;; Keywords: convenience
-;; Package-Requires: ((emacs "27.1") (elpaca "0"))
+;; Package-Requires: ((emacs "27.1"))
 ;; Version: 0.1.0
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -102,7 +102,6 @@ and :url (upstream fetch location)."
     "\\`\\.github/" "\\`\\.gitlab" "\\`\\.gitignore\\'"
     "\\`\\.hg/" "\\`\\.svn/"
     "\\.elc\\'" "~\\'" "/#[^/]*#\\'" "/\\.#"
-    "\\`tests?/" "/tests?/" "-tests?\\.el\\'"
     "\\`\\.elpaignore\\'" "\\`\\.dir-locals\\.el\\'"
     "\\`LICENSE\\'" "\\`COPYING\\(\\.LESSER\\)?\\'"
     "\\`ChangeLog\\." "\\`README" "-pkg\\.el\\'")
@@ -220,19 +219,32 @@ ENTRY-EXTRAS is a list of additional regexps from the ELPA entry."
                             (plist-get plist :excludes)))))
     (mapcar (lambda (p) (concat "\\`" (regexp-quote p) "\\'")) patterns)))
 
-(defun elpaca-build-augment--build-link-target (rel lisp-dir)
+(defun elpaca-build-augment--strip-lisp-dir (rel lisp-dir)
+  "Strip LISP-DIR prefix from REL if present."
+  (if (and lisp-dir
+           (string-prefix-p (file-name-as-directory lisp-dir) rel))
+      (substring rel (length (file-name-as-directory lisp-dir)))
+    rel))
+
+(defun elpaca-build-augment--info-basename-counts (rels)
+  "Return a hash table mapping each .info basename in RELS to its count."
+  (let ((counts (make-hash-table :test #'equal)))
+    (dolist (r rels counts)
+      (when (string-match-p "\\.info\\(-[0-9]+\\)?\\'" r)
+        (let ((base (file-name-nondirectory r)))
+          (puthash base (1+ (gethash base counts 0)) counts))))))
+
+(defun elpaca-build-augment--build-link-target (rel lisp-dir info-counts)
   "Map source-relative REL to its build-dir-relative target.
-Flattens two kinds of prefix per ELPA's packaging conventions:
-LISP-DIR (so `lisp/foo.el' lands at build root as `foo.el') and
-any directory prefix on an .info file (so `doc/foo.info' lands at
-build root as `foo.info', where `Info-directory-list' finds it)."
-  (let ((flat
-         (if (and lisp-dir
-                  (string-prefix-p (file-name-as-directory lisp-dir) rel))
-             (substring rel (length (file-name-as-directory lisp-dir)))
-           rel)))
+Flattens LISP-DIR (so `lisp/foo.el' lands at build root as `foo.el').
+Flattens .info directory prefix (so `doc/foo.info' lands at build root
+where `Info-directory-list' finds it), but only when its basename is
+unique across the package -- colliding basenames keep their directory
+prefix.  INFO-COUNTS is a basename->count hash for the whole file set."
+  (let ((flat (elpaca-build-augment--strip-lisp-dir rel lisp-dir)))
     (if (string-match-p "\\.info\\(-[0-9]+\\)?\\'" flat)
-        (file-name-nondirectory flat)
+        (let ((base (file-name-nondirectory flat)))
+          (if (> (gethash base info-counts 0) 1) flat base))
       flat)))
 
 (defun elpaca-build-augment--texi-output-name (file)
@@ -314,14 +326,21 @@ the ELPA entry's `:lisp-dir' field by flattening that prefix."
                                              (not (string-match-p
                                                    "/\\.git\\(?:/\\|\\'\\)"
                                                    d)))))
+         (kept (cl-loop for abs in all
+                        for rel = (file-relative-name abs src)
+                        unless (elpaca-build-augment--excluded-p rel extras)
+                        collect (cons abs rel)))
+         (info-counts (elpaca-build-augment--info-basename-counts
+                       (mapcar (lambda (p)
+                                 (elpaca-build-augment--strip-lisp-dir
+                                  (cdr p) lisp-dir))
+                               kept)))
          (specs
-          (cl-loop for abs in all
-                   for rel = (file-relative-name abs src)
-                   unless (elpaca-build-augment--excluded-p rel extras)
+          (cl-loop for (abs . rel) in kept
                    collect (cons abs
                                  (expand-file-name
                                   (elpaca-build-augment--build-link-target
-                                   rel lisp-dir)
+                                   rel lisp-dir info-counts)
                                   build)))))
     (setf (elpaca<-files e) specs))
   (elpaca-continue e))
