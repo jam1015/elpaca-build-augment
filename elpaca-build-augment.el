@@ -152,11 +152,16 @@ ships no metadata, only the elisp that fetches and caches it."
   (alist-get pkg elpaca-build-augment--index))
 
 (defun elpaca-build-augment--entry-needs-help-p (entry)
-  "Non-nil if ENTRY declares at least one build-step field."
+  "Non-nil if ENTRY declares a build-step or ELPA-specific packaging field.
+Packaging fields (`:renames', `:lisp-dir') route the package through the
+metadata path even without build steps, so that `populate-files' can
+apply the rename/flatten transforms (e.g. corfu's `extensions/' flatten)."
   (let ((p (cdr entry)))
     (or (plist-get p :make)
         (plist-get p :doc)
-        (plist-get p :shell-command))))
+        (plist-get p :shell-command)
+        (plist-get p :renames)
+        (plist-get p :lisp-dir))))
 
 (defun elpaca-build-augment--doc-command (texi)
   "Return a shell command string that runs makeinfo on TEXI.
@@ -184,7 +189,9 @@ resolve correctly (GNU texinfo 7.x resolves relative to CWD)."
      (mapcar (lambda (tgt) `("make" ,tgt))
              (elpaca-build-augment--as-list (plist-get p :make)))
      (mapcar (lambda (d) `("sh" "-c" ,(elpaca-build-augment--doc-command d)))
-             (elpaca-build-augment--as-list (plist-get p :doc))))))
+             (cl-remove-if-not
+              (lambda (d) (string-match-p "\\.texi\\(nfo\\)?\\'" d))
+              (elpaca-build-augment--as-list (plist-get p :doc)))))))
 
 (defun elpaca-build-augment--synthesize-step (pkg entry)
   "Return a build-step function symbol for PKG, defining it if needed.
@@ -226,6 +233,18 @@ ENTRY-EXTRAS is a list of additional regexps from the ELPA entry."
       (substring rel (length (file-name-as-directory lisp-dir)))
     rel))
 
+(defun elpaca-build-augment--apply-renames (rel renames)
+  "Apply ELPA :renames spec RENAMES to source-relative REL.
+RENAMES is a list of (FROM TO) pairs; the first FROM that is a prefix
+of REL is replaced with TO.  Mirrors elpa-admin.el's packaging rename
+step (e.g. corfu's `((\"extensions/\" \"\"))' flattens extensions/)."
+  (or (cl-some (lambda (pair)
+                 (let ((from (car pair)) (to (cadr pair)))
+                   (when (and (stringp from) (string-prefix-p from rel))
+                     (concat (or to "") (substring rel (length from))))))
+               renames)
+      rel))
+
 (defun elpaca-build-augment--info-basename-counts (rels)
   "Return a hash table mapping each .info basename in RELS to its count."
   (let ((counts (make-hash-table :test #'equal)))
@@ -234,14 +253,16 @@ ENTRY-EXTRAS is a list of additional regexps from the ELPA entry."
         (let ((base (file-name-nondirectory r)))
           (puthash base (1+ (gethash base counts 0)) counts))))))
 
-(defun elpaca-build-augment--build-link-target (rel lisp-dir info-counts)
+(defun elpaca-build-augment--build-link-target (rel lisp-dir renames info-counts)
   "Map source-relative REL to its build-dir-relative target.
-Flattens LISP-DIR (so `lisp/foo.el' lands at build root as `foo.el').
-Flattens .info directory prefix (so `doc/foo.info' lands at build root
+Applies RENAMES (ELPA :renames), then strips LISP-DIR, then flattens
+any .info directory prefix (so `doc/foo.info' lands at build root
 where `Info-directory-list' finds it), but only when its basename is
 unique across the package -- colliding basenames keep their directory
 prefix.  INFO-COUNTS is a basename->count hash for the whole file set."
-  (let ((flat (elpaca-build-augment--strip-lisp-dir rel lisp-dir)))
+  (let ((flat (elpaca-build-augment--strip-lisp-dir
+               (elpaca-build-augment--apply-renames rel renames)
+               lisp-dir)))
     (if (string-match-p "\\.info\\(-[0-9]+\\)?\\'" flat)
         (let ((base (file-name-nondirectory flat)))
           (if (> (gethash base info-counts 0) 1) flat base))
@@ -312,7 +333,8 @@ non-elisp assets (etc/, images/, *.ti, etc.) land in the build dir
 without any per-package `:files' tuning.  Produces file-level pairs,
 not directory-level ones, so Elpaca's autoload walker (which does not
 descend directory symlinks) still finds .el files in subdirs.  Honors
-the ELPA entry's `:lisp-dir' field by flattening that prefix."
+the ELPA entry's `:lisp-dir' and `:renames' fields by rewriting path
+prefixes accordingly (so e.g. corfu's `extensions/' subdir flattens)."
   (let* ((src (elpaca<-source-dir e))
          (build (elpaca<-build-dir e))
          (pkg-name (or (elpaca<-package e)
@@ -321,6 +343,7 @@ the ELPA entry's `:lisp-dir' field by flattening that prefix."
                      (elpaca-build-augment--entry (intern pkg-name))))
          (extras (elpaca-build-augment--entry-exclude-regexps entry))
          (lisp-dir (plist-get (cdr entry) :lisp-dir))
+         (renames (plist-get (cdr entry) :renames))
          (all (directory-files-recursively src ".*" nil
                                            (lambda (d)
                                              (not (string-match-p
@@ -333,14 +356,16 @@ the ELPA entry's `:lisp-dir' field by flattening that prefix."
          (info-counts (elpaca-build-augment--info-basename-counts
                        (mapcar (lambda (p)
                                  (elpaca-build-augment--strip-lisp-dir
-                                  (cdr p) lisp-dir))
+                                  (elpaca-build-augment--apply-renames
+                                   (cdr p) renames)
+                                  lisp-dir))
                                kept)))
          (specs
           (cl-loop for (abs . rel) in kept
                    collect (cons abs
                                  (expand-file-name
                                   (elpaca-build-augment--build-link-target
-                                   rel lisp-dir info-counts)
+                                   rel lisp-dir renames info-counts)
                                   build)))))
     (setf (elpaca<-files e) specs))
   (elpaca-continue e))
