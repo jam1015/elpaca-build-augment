@@ -127,19 +127,23 @@ copies from upstream later:
 M-x elpaca-build-augment-refresh
 ```
 
-### Escape hatch
+### Overriding on a per-package basis
 
-If a package needs a recipe field beyond what its ELPA entry implies, customize
-`elpaca-build-augment-overrides`:
+Nothing library-specific is needed. The hook only ever returns `:build`, and
+only when the user hasn't already set it. Everything else — `:branch`, `:repo`,
+`:files`, `:ignored-files` — can be adjusted inline in the `(elpaca ...)` /
+`(use-package ... :ensure (...))` form; Elpaca's recipe merging gives the
+user's declaration higher precedence than the menu's. To exempt a specific
+package from augmentation entirely, just declare its own `:build` yourself —
+the hook sees the field is set and skips the package.
 
 ```elisp
-(setq elpaca-build-augment-overrides
-      '((somepkg :branch "release"
-                 :files (:defaults "extra-dir"))))
-```
+;; Change a repo field inline — hook doesn't touch :branch, so it stays.
+(use-package somepkg :ensure (:branch "release"))
 
-The alist entries are merged on top of the auto-synthesized recipe after
-everything else.
+;; Opt out of augmentation for one package by giving it an explicit :build.
+(use-package weirdpkg :ensure (:build nil))
+```
 
 ## Limitations
 
@@ -152,6 +156,21 @@ everything else.
   for Elpaca to clone, so this library can't install them from source. You
   already have them bundled with Emacs anyway; if you specifically want the
   ELPA-newer version, use `:type tar :inherit elpaca-menu-gnu-elpa`.
+
+## Caveat: install-time filesystem scan
+
+Both paths recursively walk the package's source tree at install time — the
+ELPA path to build a flat `(source-file . build-file)` pair list, the heuristic
+path to find `.texi` manuals. The walk is cheap for normal packages (~10 ms per
+install) and happens only on install/rebuild, not on every Emacs startup, but
+it's unavoidable with elpaca's current internals: `elpaca-generate-autoloads`
+and friends skip symlinked directories, so we can't take the simpler route of
+`:files ("*" (:exclude ...))` and let elpaca symlink `lisp/` as a whole
+directory — nested `.el` files would be invisible to autoload scanning. We have
+to symlink files individually.
+
+If upstream Elpaca ever grew the ability to follow directory symlinks the walks
+here could be shrunk or removed entirely.
 
 ## License
 

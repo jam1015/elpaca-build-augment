@@ -57,8 +57,10 @@
 ;;
 ;; Use `M-x elpaca-build-augment-explain' to see which steps would be
 ;; injected for a package, and `M-x elpaca-build-augment-refresh' to
-;; re-download the bundled ELPA snapshots.  Per-package escape-hatch
-;; recipe overrides live in `elpaca-build-augment-overrides'.
+;; re-download the bundled ELPA snapshots.  To exempt a specific
+;; package from augmentation, just declare its `:build' yourself in
+;; the `(elpaca ...)' / `(use-package ... :ensure (...))' form -- the
+;; hook skips any recipe that already carries a `:build' field.
 
 ;;; Code:
 
@@ -93,14 +95,6 @@ fetching from upstream; refreshable via `elpaca-build-augment-refresh'."
   "Alist of (LABEL PLIST) describing ELPA metadata sources.
 PLIST keys: :file (basename cached under `elpaca-build-augment-data-dir')
 and :url (upstream fetch location)."
-  :type '(alist :key-type symbol :value-type plist))
-
-(defcustom elpaca-build-augment-overrides nil
-  "Alist of (PACKAGE . RECIPE-PLIST) escape-hatch overrides.
-Merged on top of the auto-synthesized recipe for PACKAGE.  Normally
-unused -- the hook mirrors ELPA's \"ship everything in source\"
-packaging model, which captures non-elisp assets without per-package
-tuning.  Populate this only for packages that still need surgery."
   :type '(alist :key-type symbol :value-type plist))
 
 (defcustom elpaca-build-augment-exclude-regexps
@@ -350,7 +344,6 @@ build pipeline."
               (pkg (intern pkg-name))
               ((not (plist-member recipe :build))))
     (let* ((entry (elpaca-build-augment--entry pkg))
-           (overrides (alist-get pkg elpaca-build-augment-overrides))
            (elpa-help (and entry
                            (elpaca-build-augment--entry-needs-help-p entry)))
            (before-steps
@@ -358,12 +351,10 @@ build pipeline."
                 (list (elpaca-build-augment--synthesize-step pkg entry)
                       'elpaca-build-augment--build-populate-files)
               (list 'elpaca-build-augment--build-scan-and-makeinfo))))
-      (append
-       `(:build ((:not elpaca-build-docs)
-                 (:before elpaca-build-link ,@before-steps)
-                 (:after elpaca-build-link
-                         elpaca-build-augment--queue-install-info)))
-       overrides))))
+      `(:build ((:not elpaca-build-docs)
+                (:before elpaca-build-link ,@before-steps)
+                (:after elpaca-build-link
+                        elpaca-build-augment--queue-install-info))))))
 
 ;;;###autoload
 (defun elpaca-build-augment-enable ()
@@ -379,7 +370,7 @@ build pipeline."
 
 ;;;###autoload
 (defun elpaca-build-augment-explain (pkg)
-  "Print the build steps and overrides that would be applied to PKG."
+  "Print the build steps that would be applied to PKG."
   (interactive
    (list (intern (completing-read "Package: "
                                   (progn (unless elpaca-build-augment--index
@@ -399,14 +390,11 @@ build pipeline."
        (t
         (if entry
             (princ (format "ELPA entry (no build fields):\n  %S\n\n" entry))
-          (princ "No entry in bundled GNU/NonGNU ELPA snapshots.\n\n"))
+          (princ "No entry in GNU/NonGNU ELPA snapshots.\n\n"))
         (princ "Generic path -- at install time, scan source for\n")
         (princ "standalone .texi files (any with @setfilename) and run\n")
         (princ "makeinfo on each from its own directory.  No-op if the\n")
-        (princ "package ships no manual.\n")))
-      (when-let* ((overrides (alist-get pkg elpaca-build-augment-overrides)))
-        (princ (format "\nUser overrides from `elpaca-build-augment-overrides':\n  %S\n"
-                       overrides))))))
+        (princ "package ships no manual.\n"))))))
 
 ;;;###autoload
 (defun elpaca-build-augment-refresh ()
