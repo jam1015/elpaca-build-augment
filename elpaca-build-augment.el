@@ -64,6 +64,23 @@
 
 ;;; Code:
 
+;; When this file is byte-compiled by Elpaca, the compile subprocess
+;; runs with no Elpaca on `load-path' -- Elpaca filters its own name
+;; out of Package-Requires because it is bootstrapped, not package-
+;; managed.  Our build dir sits as a sibling of Elpaca's own build dir
+;; under <elpaca-builds-directory>, so adding "../elpaca" relative to
+;; our file lets the compiler find it.  At runtime the user has
+;; already loaded Elpaca (in order to call us), so this is a no-op.
+(eval-when-compile
+  (let ((here (or (and (boundp 'byte-compile-current-file) byte-compile-current-file)
+                  load-file-name
+                  buffer-file-name)))
+    (when here
+      (let ((sibling (expand-file-name "../elpaca"
+                                       (file-name-directory here))))
+        (when (file-directory-p sibling)
+          (add-to-list 'load-path sibling))))))
+
 (require 'elpaca)
 (require 'cl-lib)
 (require 'url)
