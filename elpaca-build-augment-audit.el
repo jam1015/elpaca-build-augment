@@ -1,4 +1,4 @@
-;;; elpaca-build-augment-test.el --- Compare Elpaca builds to package.el tarballs -*- lexical-binding: t; -*-
+;;; elpaca-build-augment-audit.el --- Compare Elpaca builds to package.el tarballs -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 Jordan Mandel
 
@@ -29,14 +29,14 @@
 ;;
 ;; Three entry points:
 ;;
-;;   M-x elpaca-build-augment-test        -- completing-read one package
-;;   M-x elpaca-build-augment-test-all    -- audit every queued package
-;;   `elpaca-build-augment-test-watch'    -- defcustom list; after init,
+;;   M-x elpaca-build-augment-audit        -- completing-read one package
+;;   M-x elpaca-build-augment-audit-all    -- audit every queued package
+;;   `elpaca-build-augment-audit-watch'    -- defcustom list; after init,
 ;;                                           any watched package whose
 ;;                                           parity broke is reported
 ;;                                           in the *Messages* buffer.
 ;;
-;; Enable with `(elpaca-build-augment-test-enable)' to install the
+;; Enable with `(elpaca-build-augment-audit-enable)' to install the
 ;; watch hook.  The other commands work without the hook.
 
 ;;; Code:
@@ -47,17 +47,17 @@
 (require 'url)
 (require 'tabulated-list)
 
-(defgroup elpaca-build-augment-test nil
+(defgroup elpaca-build-augment-audit nil
   "Audit Elpaca builds against package.el tarballs."
   :group 'elpaca-build-augment
-  :prefix "elpaca-build-augment-test-")
+  :prefix "elpaca-build-augment-audit-")
 
-(defcustom elpaca-build-augment-test-cache-dir
-  (expand-file-name "elpaca-build-augment-test-cache/" user-emacs-directory)
+(defcustom elpaca-build-augment-audit-cache-dir
+  (expand-file-name "elpaca-build-augment-audit-cache/" user-emacs-directory)
   "Directory holding downloaded tarballs and their extracted contents."
   :type 'directory)
 
-(defcustom elpaca-build-augment-test-archives
+(defcustom elpaca-build-augment-audit-archives
   '((gnu    . "https://elpa.gnu.org/packages/")
     (nongnu . "https://elpa.nongnu.org/nongnu/")
     (melpa  . "https://melpa.org/packages/"))
@@ -66,7 +66,7 @@ BASE-URL must end in a slash; `archive-contents' and `<pkg>-<ver>.tar'
 are appended to it."
   :type '(alist :key-type symbol :value-type string))
 
-(defcustom elpaca-build-augment-test-ignore-regexps
+(defcustom elpaca-build-augment-audit-ignore-regexps
   '("\\.elc?\\'"
     "-autoloads\\.el\\'"
     "-pkg\\.el\\'"
@@ -81,21 +81,21 @@ produce from the same source are excluded by default -- only genuine
 build artifacts remain."
   :type '(repeat regexp))
 
-(defvar elpaca-build-augment-test--archive-cache (make-hash-table :test #'eq)
+(defvar elpaca-build-augment-audit--archive-cache (make-hash-table :test #'eq)
   "Hash mapping archive label -> parsed `archive-contents' alist.")
 
-(defcustom elpaca-build-augment-test-watch nil
+(defcustom elpaca-build-augment-audit-watch nil
   "List of package symbols to audit automatically after Elpaca finishes.
 A one-line parity report is written to *Messages* for each.  Use
-`elpaca-build-augment-test-enable' to install the hook."
+`elpaca-build-augment-audit-enable' to install the hook."
   :type '(repeat symbol))
 
 ;;;; Archive fetch & lookup
 
-(defun elpaca-build-augment-test--archive-contents (label)
+(defun elpaca-build-augment-audit--archive-contents (label)
   "Return parsed `archive-contents' for archive LABEL, fetching if needed."
-  (or (gethash label elpaca-build-augment-test--archive-cache)
-      (let* ((base (alist-get label elpaca-build-augment-test-archives))
+  (or (gethash label elpaca-build-augment-audit--archive-cache)
+      (let* ((base (alist-get label elpaca-build-augment-audit-archives))
              (url (concat base "archive-contents"))
              (contents
               (with-temp-buffer
@@ -103,19 +103,19 @@ A one-line parity report is written to *Messages* for each.  Use
                     (progn (url-insert-file-contents url)
                            (goto-char (point-min))
                            (read (current-buffer)))
-                  (error (message "elpaca-build-augment-test: fetch %s failed: %s"
+                  (error (message "elpaca-build-augment-audit: fetch %s failed: %s"
                                   url err)
                          nil)))))
         (when contents
           (puthash label (cdr contents) ; drop the leading version int
-                   elpaca-build-augment-test--archive-cache))
-        (gethash label elpaca-build-augment-test--archive-cache))))
+                   elpaca-build-augment-audit--archive-cache))
+        (gethash label elpaca-build-augment-audit--archive-cache))))
 
-(defun elpaca-build-augment-test--find-in-archives (pkg)
+(defun elpaca-build-augment-audit--find-in-archives (pkg)
   "Return (LABEL VERSION-STRING KIND) for PKG, or nil if unavailable.
 KIND is the symbol `tar' or `single' from archive-contents."
-  (cl-loop for (label . _url) in elpaca-build-augment-test-archives
-           for contents = (elpaca-build-augment-test--archive-contents label)
+  (cl-loop for (label . _url) in elpaca-build-augment-audit-archives
+           for contents = (elpaca-build-augment-audit--archive-contents label)
            for entry = (and contents (alist-get pkg contents))
            when entry
            return (list label
@@ -125,16 +125,16 @@ KIND is the symbol `tar' or `single' from archive-contents."
 
 ;;;; Download & extract
 
-(defun elpaca-build-augment-test--tarball-url (label pkg version kind)
+(defun elpaca-build-augment-audit--tarball-url (label pkg version kind)
   "Return the download URL for PKG VERSION in archive LABEL."
-  (let ((base (alist-get label elpaca-build-augment-test-archives))
+  (let ((base (alist-get label elpaca-build-augment-audit-archives))
         (ext (if (eq kind 'single) "el" "tar")))
     (format "%s%s-%s.%s" base pkg version ext)))
 
-(defun elpaca-build-augment-test--gc-stale (pkg keep-version)
+(defun elpaca-build-augment-audit--gc-stale (pkg keep-version)
   "Delete any cached PKG-* dir other than PKG-KEEP-VERSION.
 Keeps the cache size bounded as archives roll new versions."
-  (let ((root elpaca-build-augment-test-cache-dir)
+  (let ((root elpaca-build-augment-audit-cache-dir)
         (keep (format "%s-%s" pkg keep-version))
         (prefix (format "%s-" pkg)))
     (when (file-directory-p root)
@@ -144,22 +144,22 @@ Keeps the cache size bounded as archives roll new versions."
                    (file-directory-p (expand-file-name entry root)))
           (delete-directory (expand-file-name entry root) t))))))
 
-(defun elpaca-build-augment-test--extracted-dir (pkg version kind)
+(defun elpaca-build-augment-audit--extracted-dir (pkg version kind)
   "Return the local directory where PKG VERSION should be extracted.
 If PKG is already cached at VERSION, skip the download; otherwise fetch
 and extract.  Any cached PKG at a different version is deleted first."
-  (let* ((root elpaca-build-augment-test-cache-dir)
+  (let* ((root elpaca-build-augment-audit-cache-dir)
          (dir  (expand-file-name (format "%s-%s" pkg version) root)))
     (unless (file-directory-p dir)
-      (elpaca-build-augment-test--gc-stale pkg version)
+      (elpaca-build-augment-audit--gc-stale pkg version)
       (make-directory root t)
-      (let* ((info (elpaca-build-augment-test--find-in-archives pkg))
+      (let* ((info (elpaca-build-augment-audit--find-in-archives pkg))
              (label (car info))
-             (url (elpaca-build-augment-test--tarball-url
+             (url (elpaca-build-augment-audit--tarball-url
                    label pkg version kind))
-             (tmp (make-temp-file "elpaca-build-augment-test-" nil
+             (tmp (make-temp-file "elpaca-build-augment-audit-" nil
                                   (if (eq kind 'single) ".el" ".tar"))))
-        (message "elpaca-build-augment-test: downloading %s..." url)
+        (message "elpaca-build-augment-audit: downloading %s..." url)
         (url-copy-file url tmp t)
         (make-directory dir t)
         (if (eq kind 'single)
@@ -173,7 +173,7 @@ and extract.  Any cached PKG at a different version is deleted first."
 
 ;;;; Diff
 
-(defun elpaca-build-augment-test--walk (dir)
+(defun elpaca-build-augment-audit--walk (dir)
   "Return basenames of regular files under DIR, filtered by ignore regexps."
   (let ((all (and (file-directory-p dir)
                   (directory-files-recursively
@@ -183,20 +183,20 @@ and extract.  Any cached PKG at a different version is deleted first."
      (cl-loop for abs in all
               for base = (file-name-nondirectory abs)
               unless (cl-some (lambda (re) (string-match-p re base))
-                              elpaca-build-augment-test-ignore-regexps)
+                              elpaca-build-augment-audit-ignore-regexps)
               collect base)
      :test #'equal)))
 
-(defun elpaca-build-augment-test--elpaca-build-dir (pkg)
+(defun elpaca-build-augment-audit--elpaca-build-dir (pkg)
   "Return PKG's Elpaca build dir, or nil if not built."
   (let* ((name (if (symbolp pkg) (symbol-name pkg) pkg))
          (dir (expand-file-name name elpaca-builds-directory)))
     (and (file-directory-p dir) dir)))
 
-(cl-defstruct elpaca-build-augment-test--result
+(cl-defstruct elpaca-build-augment-audit--result
   pkg archive version missing extra status pin)
 
-(defun elpaca-build-augment-test--recipe-pin (pkg archive-version)
+(defun elpaca-build-augment-audit--recipe-pin (pkg archive-version)
   "Return a short string describing how PKG is pinned, or nil.
 Inspects the resolved Elpaca recipe for `:ref', `:tag', `:tar',
 `:branch', `:pin', or `:version'.  A pinned recipe means the
@@ -222,42 +222,42 @@ the menu sets `:tar' on all of them)."
        ((plist-get recipe :version) (format "version:%s" (plist-get recipe :version)))
        ((plist-get recipe :pin)     "pinned")))))
 
-(defun elpaca-build-augment-test--compare (pkg)
+(defun elpaca-build-augment-audit--compare (pkg)
   "Return a result struct for PKG."
-  (let* ((build (elpaca-build-augment-test--elpaca-build-dir pkg))
-         (info (elpaca-build-augment-test--find-in-archives pkg))
+  (let* ((build (elpaca-build-augment-audit--elpaca-build-dir pkg))
+         (info (elpaca-build-augment-audit--find-in-archives pkg))
          (archive-version (cadr info))
-         (pin (elpaca-build-augment-test--recipe-pin pkg archive-version)))
+         (pin (elpaca-build-augment-audit--recipe-pin pkg archive-version)))
     (cond
      ((null build)
-      (make-elpaca-build-augment-test--result
+      (make-elpaca-build-augment-audit--result
        :pkg pkg :pin pin :status 'not-built))
      ((null info)
-      (make-elpaca-build-augment-test--result
+      (make-elpaca-build-augment-audit--result
        :pkg pkg :pin pin :status 'no-tarball))
      (t
       (pcase-let ((`(,label ,version ,kind) info))
         (condition-case err
-            (let* ((tdir (elpaca-build-augment-test--extracted-dir
+            (let* ((tdir (elpaca-build-augment-audit--extracted-dir
                           pkg version kind))
-                   (tar-files (elpaca-build-augment-test--walk tdir))
-                   (build-files (elpaca-build-augment-test--walk build))
+                   (tar-files (elpaca-build-augment-audit--walk tdir))
+                   (build-files (elpaca-build-augment-audit--walk build))
                    (missing (cl-set-difference tar-files build-files
                                                :test #'equal))
                    (extra (cl-set-difference build-files tar-files
                                              :test #'equal)))
-              (make-elpaca-build-augment-test--result
+              (make-elpaca-build-augment-audit--result
                :pkg pkg :archive label :version version :pin pin
                :missing missing :extra extra
                :status (if missing 'gap 'ok)))
-          (error (make-elpaca-build-augment-test--result
+          (error (make-elpaca-build-augment-audit--result
                   :pkg pkg :archive (car info) :version (cadr info)
                   :pin pin
                   :status (cons 'error (error-message-string err))))))))))
 
 ;;;; Report buffer
 
-(define-derived-mode elpaca-build-augment-test-mode tabulated-list-mode
+(define-derived-mode elpaca-build-augment-audit-mode tabulated-list-mode
   "EBA-Test"
   "Tabulated report of Elpaca-vs-tarball parity audits."
   (setq tabulated-list-format
@@ -270,7 +270,7 @@ the menu sets `:tar' on all of them)."
   (setq tabulated-list-padding 1)
   (tabulated-list-init-header))
 
-(defun elpaca-build-augment-test--status-string (status)
+(defun elpaca-build-augment-audit--status-string (status)
   (pcase status
     ('ok "ok")
     ('gap "GAP")
@@ -279,33 +279,33 @@ the menu sets `:tar' on all of them)."
     (`(error . ,msg) (format "error:%s" msg))
     (_ (format "%s" status))))
 
-(defun elpaca-build-augment-test--row (r)
-  (let* ((pkg (elpaca-build-augment-test--result-pkg r))
-         (missing (elpaca-build-augment-test--result-missing r))
-         (status (elpaca-build-augment-test--result-status r)))
+(defun elpaca-build-augment-audit--row (r)
+  (let* ((pkg (elpaca-build-augment-audit--result-pkg r))
+         (missing (elpaca-build-augment-audit--result-missing r))
+         (status (elpaca-build-augment-audit--result-status r)))
     (list pkg
           (vector (symbol-name pkg)
-                  (if-let* ((a (elpaca-build-augment-test--result-archive r)))
+                  (if-let* ((a (elpaca-build-augment-audit--result-archive r)))
                       (symbol-name a) "-")
-                  (or (elpaca-build-augment-test--result-version r) "-")
-                  (elpaca-build-augment-test--status-string status)
-                  (or (elpaca-build-augment-test--result-pin r) "")
+                  (or (elpaca-build-augment-audit--result-version r) "-")
+                  (elpaca-build-augment-audit--status-string status)
+                  (or (elpaca-build-augment-audit--result-pin r) "")
                   (if missing
                       (mapconcat #'identity (seq-take missing 6) ", ")
                     "")))))
 
-(defun elpaca-build-augment-test--show (results)
-  (let ((buf (get-buffer-create "*elpaca-build-augment-test*")))
+(defun elpaca-build-augment-audit--show (results)
+  (let ((buf (get-buffer-create "*elpaca-build-augment-audit*")))
     (with-current-buffer buf
-      (elpaca-build-augment-test-mode)
+      (elpaca-build-augment-audit-mode)
       (setq tabulated-list-entries
-            (mapcar #'elpaca-build-augment-test--row results))
+            (mapcar #'elpaca-build-augment-audit--row results))
       (tabulated-list-print))
     (pop-to-buffer buf)))
 
 ;;;; Entry points
 
-(defun elpaca-build-augment-test--queued-packages ()
+(defun elpaca-build-augment-audit--queued-packages ()
   "Return a sorted list of package symbols currently known to Elpaca."
   (sort (cl-loop for item in (elpaca--queued)
                  for sym = (car-safe item)
@@ -313,7 +313,7 @@ the menu sets `:tar' on all of them)."
         (lambda (a b) (string< (symbol-name a) (symbol-name b)))))
 
 ;;;###autoload
-(defun elpaca-build-augment-test (pkg)
+(defun elpaca-build-augment-audit (pkg)
   "Audit one package: compare its Elpaca build dir against the tarball.
 Always refetches `archive-contents' so the latest upstream version is
 seen; the tarball itself is only re-downloaded when the version has
@@ -322,57 +322,57 @@ changed since the last audit."
    (list (intern (completing-read
                   "Package: "
                   (mapcar #'symbol-name
-                          (elpaca-build-augment-test--queued-packages))
+                          (elpaca-build-augment-audit--queued-packages))
                   nil nil))))
-  (clrhash elpaca-build-augment-test--archive-cache)
-  (elpaca-build-augment-test--show
-   (list (elpaca-build-augment-test--compare pkg))))
+  (clrhash elpaca-build-augment-audit--archive-cache)
+  (elpaca-build-augment-audit--show
+   (list (elpaca-build-augment-audit--compare pkg))))
 
 ;;;###autoload
-(defun elpaca-build-augment-test-all ()
+(defun elpaca-build-augment-audit-all ()
   "Audit every package Elpaca has queued; render results in a buffer.
 Always refetches `archive-contents' so the latest upstream version is
 seen; each tarball is only re-downloaded when its version has changed
 since the last audit."
   (interactive)
-  (clrhash elpaca-build-augment-test--archive-cache)
-  (let ((pkgs (elpaca-build-augment-test--queued-packages)))
-    (elpaca-build-augment-test--show
+  (clrhash elpaca-build-augment-audit--archive-cache)
+  (let ((pkgs (elpaca-build-augment-audit--queued-packages)))
+    (elpaca-build-augment-audit--show
      (cl-loop for p in pkgs
-              do (message "elpaca-build-augment-test: %s..." p)
-              collect (elpaca-build-augment-test--compare p)))))
+              do (message "elpaca-build-augment-audit: %s..." p)
+              collect (elpaca-build-augment-audit--compare p)))))
 
-(defun elpaca-build-augment-test--watch-run ()
-  "Audit each `elpaca-build-augment-test-watch' package; message gaps."
-  (clrhash elpaca-build-augment-test--archive-cache)
-  (dolist (pkg elpaca-build-augment-test-watch)
-    (let* ((r (elpaca-build-augment-test--compare pkg))
-           (pin (elpaca-build-augment-test--result-pin r))
+(defun elpaca-build-augment-audit--watch-run ()
+  "Audit each `elpaca-build-augment-audit-watch' package; message gaps."
+  (clrhash elpaca-build-augment-audit--archive-cache)
+  (dolist (pkg elpaca-build-augment-audit-watch)
+    (let* ((r (elpaca-build-augment-audit--compare pkg))
+           (pin (elpaca-build-augment-audit--result-pin r))
            (suffix (if pin (format " [pinned: %s -- gap may be version skew]" pin)
                      "")))
-      (pcase (elpaca-build-augment-test--result-status r)
-        ('gap (message "elpaca-build-augment-test: %s missing %s%s"
+      (pcase (elpaca-build-augment-audit--result-status r)
+        ('gap (message "elpaca-build-augment-audit: %s missing %s%s"
                        pkg
                        (mapconcat #'identity
-                                  (elpaca-build-augment-test--result-missing r)
+                                  (elpaca-build-augment-audit--result-missing r)
                                   ", ")
                        suffix))
-        ('ok  (message "elpaca-build-augment-test: %s ok%s" pkg suffix))
+        ('ok  (message "elpaca-build-augment-audit: %s ok%s" pkg suffix))
         (_    nil)))))
 
 ;;;###autoload
-(defun elpaca-build-augment-test-enable ()
+(defun elpaca-build-augment-audit-enable ()
   "Install an `elpaca-after-init-hook' that audits watched packages."
   (interactive)
   (add-hook 'elpaca-after-init-hook
-            #'elpaca-build-augment-test--watch-run))
+            #'elpaca-build-augment-audit--watch-run))
 
 ;;;###autoload
-(defun elpaca-build-augment-test-disable ()
+(defun elpaca-build-augment-audit-disable ()
   "Remove the `elpaca-after-init-hook' audit."
   (interactive)
   (remove-hook 'elpaca-after-init-hook
-               #'elpaca-build-augment-test--watch-run))
+               #'elpaca-build-augment-audit--watch-run))
 
-(provide 'elpaca-build-augment-test)
-;;; elpaca-build-augment-test.el ends here
+(provide 'elpaca-build-augment-audit)
+;;; elpaca-build-augment-audit.el ends here

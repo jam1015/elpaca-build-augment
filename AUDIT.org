@@ -1,4 +1,4 @@
-#+TITLE: elpaca-build-augment-test
+#+TITLE: elpaca-build-augment-audit
 
 Companion to [[file:elpaca-build-augment.el][elpaca-build-augment]]. The augment library /produces/ the
 missing build artifacts; this one /verifies/ that it did, by downloading the
@@ -24,7 +24,7 @@ File *basenames* only, not full paths — =package.el= flattens the layout and
 Elpaca preserves the repo tree, so a path-level diff is noise.
 
 Elisp output and metadata are filtered out by default (customizable via
-=elpaca-build-augment-test-ignore-regexps=):
+=elpaca-build-augment-audit-ignore-regexps=):
 
 - =*.el=, =*.elc=
 - =*-autoloads.el=, =*-pkg.el=
@@ -39,25 +39,25 @@ style files, images, data files, templates, etc.
 
 * Entry points
 
-** =M-x elpaca-build-augment-test=
+** =M-x elpaca-build-augment-audit=
 
 Prompts (vertico-friendly completing-read) for one package out of everything
 Elpaca currently has queued. Extracts the tarball under
-=<user-emacs-directory>/elpaca-build-augment-test-cache/<pkg>-<version>/= and
+=<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/= and
 pops up a one-row tabulated-list buffer summarizing the diff.
 
-** =M-x elpaca-build-augment-test-all=
+** =M-x elpaca-build-augment-audit-all=
 
 Iterates over every queued package. Produces a sortable tabulated-list buffer;
 sort by =Status= to pull all =GAP= rows to the top. First run is slow (one
 tar fetch per package); subsequent runs are fast because tarballs stay cached
 on disk — see "Cache behavior" below.
 
-** The =elpaca-build-augment-test-watch= list
+** The =elpaca-build-augment-audit-watch= list
 
 #+begin_src elisp
-(setq elpaca-build-augment-test-watch '(auctex ess eat bongo))
-(elpaca-build-augment-test-enable)
+(setq elpaca-build-augment-audit-watch '(auctex ess eat bongo))
+(elpaca-build-augment-audit-enable)
 #+end_src
 
 Installs an =elpaca-after-init-hook= that audits every package in the list
