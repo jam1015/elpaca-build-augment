@@ -1,0 +1,106 @@
+#+TITLE: elpaca-build-augment-test
+
+Companion to [[file:elpaca-build-augment.el][elpaca-build-augment]]. The augment library /produces/ the
+missing build artifacts; this one /verifies/ that it did, by downloading the
+latest tarball from GNU ELPA, NonGNU ELPA, or MELPA for a package you have
+installed via Elpaca and diffing the two file trees.
+
+The question it answers: "For this package, am I missing anything that
+=package.el= users would have gotten in their install?"
+
+* Why this exists
+
+Elpaca installs from source. =package.el= installs from pre-built tarballs
+assembled by an upstream build server. Even with =elpaca-build-augment=
+replaying those build steps locally, it is useful to have an independent
+check — especially when first installing a new package, or when debugging a
+"this feature should work but something is missing" problem.
+
+Rather than guess, download the authoritative tarball and compare.
+
+* What gets compared
+
+File *basenames* only, not full paths — =package.el= flattens the layout and
+Elpaca preserves the repo tree, so a path-level diff is noise.
+
+Elisp output and metadata are filtered out by default (customizable via
+=elpaca-build-augment-test-ignore-regexps=):
+
+- =*.el=, =*.elc=
+- =*-autoloads.el=, =*-pkg.el=
+- =dir=, =.dir-locals.el=
+- =LICENSE=, =COPYING=, =COPYRIGHT=
+- =README*=, =NEWS=, =AUTHORS=, =ChangeLog*=, =TODO=
+- =*.md=, =*.rst=, =*.org=, =*.txt=
+- VCS droppings
+
+What's left is what you actually care about: =.info= manuals, =.sty= / =.cls=
+style files, images, data files, templates, etc.
+
+* Entry points
+
+** =M-x elpaca-build-augment-test=
+
+Prompts (vertico-friendly completing-read) for one package out of everything
+Elpaca currently has queued. Downloads the tarball, extracts it under
+=<user-emacs-directory>/elpaca-build-augment-test-cache/<pkg>-<version>/=, and
+pops up a one-row tabulated-list buffer summarizing the diff.
+
+** =M-x elpaca-build-augment-test-all=
+
+Iterates over every queued package. Produces a sortable tabulated-list buffer;
+sort by =Status= to pull all =GAP= rows to the top. First run is slow (one
+network fetch and tar extraction per package); subsequent runs are fast
+because tarballs stay cached on disk.
+
+** The =elpaca-build-augment-test-watch= list
+
+#+begin_src elisp
+(setq elpaca-build-augment-test-watch '(auctex ess eat bongo))
+(elpaca-build-augment-test-enable)
+#+end_src
+
+Installs an =elpaca-after-init-hook= that audits every package in the list
+once Elpaca finishes init. Each result is written as one line to =*Messages*=
+— so if a future upgrade silently drops =auctex.info=, you'll see it the
+next time Emacs starts.
+
+Opt-in by design: this isn't a =use-package= keyword, because the network
+fetch and tar extraction don't belong on every normal startup. The watch
+list is for packages you've been bitten by before.
+
+* Report columns
+
+| Column  | Meaning                                                 |
+|---------+---------------------------------------------------------|
+| Package | Symbol you asked about                                  |
+| Archive | =gnu=, =nongnu=, or =melpa= — whichever carried it     |
+| Version | Latest tarball version at audit time                    |
+| Status  | =ok=, =GAP=, =not-built=, =no-tarball=, or =error:MSG= |
+| Missing | First few basenames present in tarball but not in build |
+
+=no-tarball= means =package.el= cannot install this package at all — github-only
+packages, local recipes, or GNU ELPA =:core= packages. Not a problem; just
+nothing to compare against.
+
+* Version mismatch is expected
+
+Elpaca tracks a git commit; =package.el= ships a dated snapshot of the same
+upstream. The tool compares /latest tarball/ against /your current build/,
+not matching versions. Filename-level parity is version-insensitive for the
+things we care about (did the =.info= manual get built, did the =.sty=
+files land) so this is fine, but worth knowing.
+
+* Refreshing
+
+#+begin_example
+M-x elpaca-build-augment-test-refresh
+#+end_example
+
+Clears the cached =archive-contents= and the extracted tarball directory.
+Next audit will refetch everything.
+
+* System requirements
+
+=tar= on =PATH=. The URL fetches use Emacs's built-in =url.el=; no =curl=
+needed.

@@ -68,6 +68,16 @@ In both paths the library disables =elpaca-build-docs= (which has multi-file
 =makeinfo= bugs) and queues =elpaca--install-info= so the =dir= entry gets
 updated.
 
+* Companion: verifying parity against =package.el=
+
+A sibling file, [[file:elpaca-build-augment-test.el][elpaca-build-augment-test.el]], downloads the latest tarball
+for each package from GNU/NonGNU ELPA or MELPA and diffs it against the
+Elpaca build dir, so you can confirm — per package or across the whole
+config — that nothing a =package.el= user would have is missing from your
+Elpaca install.  See [[file:TEST.org][TEST.org]] for the full writeup and the three entry
+points (=M-x elpaca-build-augment-test=, =-test-all=, and the opt-in
+=elpaca-build-augment-test-watch= list).
+
 * Install and use
 
 System requirements: =makeinfo= (part of texinfo), =make=, and =sh= on =PATH=.
@@ -91,7 +101,11 @@ below).
          :host github
          :repo "jam1015/elpaca-build-augment"
          :wait t)
-  (elpaca-build-augment-enable))
+  (elpaca-build-augment-enable)
+  ;; Optional: audit builds against package.el tarballs.  See TEST.org.
+  (require 'elpaca-build-augment-test)
+  (setq elpaca-build-augment-test-watch '(auctex ess eat))
+  (elpaca-build-augment-test-enable))
 
 ;; -- Option A: use-package integration --
 ;; No `:wait' needed here: Elpaca's built-in `elpaca-menu-extensions'
