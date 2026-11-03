@@ -196,19 +196,28 @@ and extract.  Any cached PKG at a different version is deleted first."
 (cl-defstruct elpaca-build-augment-test--result
   pkg archive version missing extra status pin)
 
-(defun elpaca-build-augment-test--recipe-pin (pkg)
+(defun elpaca-build-augment-test--recipe-pin (pkg archive-version)
   "Return a short string describing how PKG is pinned, or nil.
-Inspects the resolved Elpaca recipe for `:ref', `:tag', `:branch',
-`:pin', or `:version'.  A pinned recipe means the installed source
-is a specific commit/branch/tag, which may predate or diverge from
-the latest tarball on the archive -- so any `GAP' row for such a
-package may reflect version skew rather than a missing build step."
+Inspects the resolved Elpaca recipe for `:ref', `:tag', `:tar',
+`:branch', `:pin', or `:version'.  A pinned recipe means the
+installed source is a specific commit/branch/tag, which may predate
+or diverge from the latest tarball on the archive -- so any `GAP' row
+for such a package may reflect version skew rather than a missing
+build step.
+
+ARCHIVE-VERSION is the latest version string from `archive-contents';
+when a `:tar' pin matches it exactly, no skew is possible and this
+returns nil (otherwise every GNU ELPA package would get a flag --
+the menu sets `:tar' on all of them)."
   (when (fboundp 'elpaca-get)
     (when-let* ((e (elpaca-get pkg))
                 (recipe (elpaca<-recipe e)))
       (cond
        ((plist-get recipe :ref)     (format "ref:%s"     (plist-get recipe :ref)))
        ((plist-get recipe :tag)     (format "tag:%s"     (plist-get recipe :tag)))
+       ((let ((tar (plist-get recipe :tar)))
+          (and tar (not (equal tar archive-version))
+               (format "tar:%s" tar))))
        ((plist-get recipe :branch)  (format "branch:%s"  (plist-get recipe :branch)))
        ((plist-get recipe :version) (format "version:%s" (plist-get recipe :version)))
        ((plist-get recipe :pin)     "pinned")))))
@@ -217,7 +226,8 @@ package may reflect version skew rather than a missing build step."
   "Return a result struct for PKG."
   (let* ((build (elpaca-build-augment-test--elpaca-build-dir pkg))
          (info (elpaca-build-augment-test--find-in-archives pkg))
-         (pin (elpaca-build-augment-test--recipe-pin pkg)))
+         (archive-version (cadr info))
+         (pin (elpaca-build-augment-test--recipe-pin pkg archive-version)))
     (cond
      ((null build)
       (make-elpaca-build-augment-test--result

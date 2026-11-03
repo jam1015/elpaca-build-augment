@@ -77,7 +77,7 @@ list is for packages you've been bitten by before.
 | Archive | =gnu=, =nongnu=, or =melpa= — whichever carried it                  |
 | Version | Latest tarball version at audit time                                 |
 | Status  | =ok=, =GAP=, =not-built=, =no-tarball=, or =error:MSG=              |
-| Pinned  | =ref:...=, =tag:...=, =branch:...=, =version:...=, or empty (see below) |
+| Pinned  | =ref:...=, =tag:...=, =tar:...=, =branch:...=, =version:...=, or empty (see below) |
 | Missing | First few basenames present in tarball but not in build              |
 
 =no-tarball= means =package.el= cannot install this package at all — github-only
@@ -86,9 +86,12 @@ nothing to compare against.
 
 * Pinned recipes
 
-If your Elpaca recipe sets =:ref=, =:tag=, =:branch=, =:version=, or
-=:pin=, the installed source is deliberately held at a specific point in
-history. The archive, however, only serves the /latest/ tarball (and in
+If your Elpaca recipe sets =:ref=, =:tag=, =:tar=, =:branch=,
+=:version=, or =:pin=, the installed source is deliberately held at a
+specific point in history. (One subtlety: =:tar= is set by every GNU
+ELPA menu entry to track the archive's released version — when it
+matches the archive's latest version exactly, no skew is possible and
+the Pinned column stays empty.) The archive, however, only serves the /latest/ tarball (and in
 MELPA's case, won't serve old ones at all), so a =GAP= on a pinned
 package may be real — build artifact genuinely missing — or may just
 reflect that upstream has moved on and the newer tarball ships a file
