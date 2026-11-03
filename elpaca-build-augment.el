@@ -99,16 +99,18 @@ fetching from upstream; refreshable via `elpaca-build-augment-refresh'."
   :type 'directory)
 
 (defcustom elpaca-build-augment-sources
-  ;; Note: these are the post-redirect canonical URLs.  Savannah's
-  ;; `git.savannah.gnu.org' bounces to `cgit.git.savannah.gnu.org' via
-  ;; 301, which `url-copy-file' in batch Emacs doesn't always follow
-  ;; cleanly.  Pointing at the final hostname avoids the redirect.
+  ;; We fetch from the `emacsmirror' GitHub mirrors rather than directly
+  ;; from Savannah.  Savannah's cgit is frequently overloaded (502s from
+  ;; its "AI scraping proxies" load-shedding page) and its URL paths
+  ;; have shifted.  The emacsmirror repos are canonical read-only
+  ;; mirrors of the elpa.git / nongnu.git repos and are backed by
+  ;; GitHub's CDN -- fast and stable.
   '((gnu
      :file "gnu-elpa-packages"
-     :url "https://cgit.git.savannah.gnu.org/cgit/emacs/elpa.git/plain/elpa-packages")
+     :url "https://raw.githubusercontent.com/emacsmirror/gnu_elpa/refs/heads/main/elpa-packages")
     (nongnu
      :file "nongnu-elpa-packages"
-     :url "https://cgit.git.savannah.gnu.org/cgit/emacs/nongnu.git/plain/elpa-packages"))
+     :url "https://raw.githubusercontent.com/emacsmirror/nongnu_elpa/refs/heads/main/elpa-packages"))
   "Alist of (LABEL PLIST) describing ELPA metadata sources.
 PLIST keys: :file (basename cached under `elpaca-build-augment-cache-dir')
 and :url (upstream fetch location)."
@@ -146,9 +148,17 @@ Populated lazily by `elpaca-build-augment--load-index'.")
 
 (defun elpaca-build-augment--load-index ()
   "Read cached snapshots into `elpaca-build-augment--index'.
-If no cached snapshots exist yet, fetch them from upstream first.
-This makes the data dir a locally-constructed artifact: the package
-ships no metadata, only the elisp that fetches and caches it."
+If a cached file is missing or doesn't look like an elpa-packages file
+(e.g. a 502 HTML page left behind by an earlier failed fetch), delete
+it and refetch before parsing.  This makes the cache self-healing: a
+transient upstream problem can't leave the user with a cache that
+crashes the hook on every subsequent package install."
+  (dolist (src elpaca-build-augment-sources)
+    (let ((path (expand-file-name (plist-get (cdr src) :file)
+                                  elpaca-build-augment-cache-dir)))
+      (when (and (file-readable-p path)
+                 (not (elpaca-build-augment--valid-snapshot-p path)))
+        (delete-file path))))
   (unless (elpaca-build-augment--snapshots-present-p)
     (elpaca-build-augment-refresh))
   (setq elpaca-build-augment--index nil)
@@ -489,17 +499,41 @@ build pipeline."
         (princ "package ships no manual.\n"))))))
 
 ;;;###autoload
+(defun elpaca-build-augment--valid-snapshot-p (path)
+  "Non-nil if PATH exists and looks like an `elpa-packages' file.
+A valid file is one whose first non-blank line starts with `;' (the
+`;; -*- lisp-data -*-' header).  Guards against corrupted responses
+(HTML error pages, truncated transfers, etc.) silently poisoning the
+cache: `url-copy-file' saves whatever bytes come back, even an HTTP
+502 page."
+  (and (file-readable-p path)
+       (> (file-attribute-size (file-attributes path)) 0)
+       (with-temp-buffer
+         (insert-file-contents path nil 0 256)
+         (goto-char (point-min))
+         (skip-chars-forward " \t\n\r")
+         (eq (char-after) ?\;))))
+
 (defun elpaca-build-augment-refresh ()
-  "Re-download the bundled elpa-packages snapshots from upstream."
+  "Re-download the elpa-packages snapshots from upstream.
+Validates each response before overwriting the cache -- bad responses
+(e.g. Savannah's 502 error pages) are discarded, not saved, so a
+transient upstream failure can't poison the cache."
   (interactive)
   (make-directory elpaca-build-augment-cache-dir t)
   (dolist (src elpaca-build-augment-sources)
     (let* ((plist (cdr src))
-           (dest (expand-file-name (plist-get plist :file)
-                                   elpaca-build-augment-cache-dir))
+           (final (expand-file-name (plist-get plist :file)
+                                    elpaca-build-augment-cache-dir))
+           (tmp (concat final ".tmp"))
            (url (plist-get plist :url)))
       (message "elpaca-build-augment: fetching %s..." url)
-      (url-copy-file url dest 'ok-if-already-exists)))
+      (url-copy-file url tmp 'ok-if-already-exists)
+      (if (elpaca-build-augment--valid-snapshot-p tmp)
+          (rename-file tmp final 'ok-if-already-exists)
+        (delete-file tmp)
+        (error "elpaca-build-augment: upstream response from %s is not a valid elpa-packages file (likely an HTTP error page); cache unchanged"
+               url))))
   (clrhash elpaca-build-augment--step-cache)
   (elpaca-build-augment--load-index)
   (message "elpaca-build-augment: refreshed %d entries"
