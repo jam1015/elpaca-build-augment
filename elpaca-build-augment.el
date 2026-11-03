@@ -180,22 +180,52 @@ apply the rename/flatten transforms (e.g. corfu's `extensions/' flatten)."
         (plist-get p :renames)
         (plist-get p :lisp-dir))))
 
-(defun elpaca-build-augment--doc-command (texi)
-  "Return a shell command string that runs makeinfo on TEXI.
-TEXI is a path relative to the package root.  The command cds into
-TEXI's directory before invoking makeinfo so that @include paths
-resolve correctly (GNU texinfo 7.x resolves relative to CWD)."
-  (let* ((dir (file-name-directory texi))
-         (base (file-name-nondirectory texi))
-         (info (concat (file-name-sans-extension base) ".info")))
-    (if dir
-        (format "cd %s && makeinfo %s -o %s"
-                (shell-quote-argument (directory-file-name dir))
-                (shell-quote-argument base)
-                (shell-quote-argument info))
-      (format "makeinfo %s -o %s"
+(defun elpaca-build-augment--doc-command (doc)
+  "Return a shell command string that builds an .info from DOC.
+DOC is a path relative to the package root.  Dispatches on extension:
+
+  .texi / .texinfo  -> cd into DOC's dir, run makeinfo.  cd is needed
+                       so @include paths resolve correctly (GNU texinfo
+                       7.x resolves relative to CWD).
+  .org              -> cd into DOC's dir, run an Emacs batch subprocess
+                       that loads ox-texinfo, exports DOC to .texi via
+                       `org-texinfo-export-to-texinfo', then runs
+                       makeinfo on the produced file.  Handles
+                       README.org-style :doc entries (corfu, consult,
+                       vertico, many others).
+
+Returns nil for unrecognized extensions."
+  (let* ((dir (file-name-directory doc))
+         (base (file-name-nondirectory doc))
+         (ext (file-name-extension base))
+         (info (concat (file-name-sans-extension base) ".info"))
+         (cd-prefix (if dir
+                        (format "cd %s && "
+                                (shell-quote-argument (directory-file-name dir)))
+                      "")))
+    (cond
+     ((member ext '("texi" "texinfo"))
+      (format "%smakeinfo %s -o %s"
+              cd-prefix
               (shell-quote-argument base)
-              (shell-quote-argument info)))))
+              (shell-quote-argument info)))
+     ((equal ext "org")
+      (let ((eval-form
+             (format
+              (concat "(progn "
+                      " (require 'ox-texinfo)"
+                      " (find-file %S)"
+                      " (let* ((org-babel-confirm-evaluate-answer-no t)"
+                      "        (texi (org-texinfo-export-to-texinfo))"
+                      "        (info (concat (file-name-sans-extension texi)"
+                      "                      \".info\")))"
+                      "   (unless (zerop (call-process \"makeinfo\" nil nil nil"
+                      "                                \"--force\" texi \"-o\" info))"
+                      "     (kill-emacs 1))))")
+              base)))
+        (format "%semacs -Q --batch --eval %s"
+                cd-prefix
+                (shell-quote-argument eval-form)))))))
 
 (defun elpaca-build-augment--commands (entry)
   "Return the list of (PROGRAM ARG...) step forms synthesized from ENTRY."
@@ -205,10 +235,11 @@ resolve correctly (GNU texinfo 7.x resolves relative to CWD)."
              (elpaca-build-augment--as-list (plist-get p :shell-command)))
      (mapcar (lambda (tgt) `("make" ,tgt))
              (elpaca-build-augment--as-list (plist-get p :make)))
-     (mapcar (lambda (d) `("sh" "-c" ,(elpaca-build-augment--doc-command d)))
-             (cl-remove-if-not
-              (lambda (d) (string-match-p "\\.texi\\(nfo\\)?\\'" d))
-              (elpaca-build-augment--as-list (plist-get p :doc)))))))
+     (delq nil
+           (mapcar (lambda (d)
+                     (when-let* ((cmd (elpaca-build-augment--doc-command d)))
+                       `("sh" "-c" ,cmd)))
+                   (elpaca-build-augment--as-list (plist-get p :doc)))))))
 
 (defun elpaca-build-augment--synthesize-step (pkg entry)
   "Return a build-step function symbol for PKG, defining it if needed.

@@ -44,6 +44,12 @@ the hook branches:
    :shell-command CMD   -> sh -c CMD   in source dir
    :make TGT            -> make TGT    in source dir
    :doc "D/F.texi"      -> cd D && makeinfo F.texi -o F.info
+   :doc "D/F.org"       -> cd D, run Emacs batch with ox-texinfo to export
+                           F.org to .texi (respecting #+export_file_name:
+                           and other org directives), then makeinfo on
+                           the produced file.  Handles the many packages
+                           whose :doc source is a README.org (corfu,
+                           consult, vertico, etc.).
    #+end_example
 
    Then mirror ELPA's "ship everything in source" packaging rule, honoring
