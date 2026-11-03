@@ -42,16 +42,16 @@ style files, images, data files, templates, etc.
 ** =M-x elpaca-build-augment-test=
 
 Prompts (vertico-friendly completing-read) for one package out of everything
-Elpaca currently has queued. Downloads the tarball, extracts it under
-=<user-emacs-directory>/elpaca-build-augment-test-cache/<pkg>-<version>/=, and
+Elpaca currently has queued. Extracts the tarball under
+=<user-emacs-directory>/elpaca-build-augment-test-cache/<pkg>-<version>/= and
 pops up a one-row tabulated-list buffer summarizing the diff.
 
 ** =M-x elpaca-build-augment-test-all=
 
 Iterates over every queued package. Produces a sortable tabulated-list buffer;
 sort by =Status= to pull all =GAP= rows to the top. First run is slow (one
-network fetch and tar extraction per package); subsequent runs are fast
-because tarballs stay cached on disk.
+tar fetch per package); subsequent runs are fast because tarballs stay cached
+on disk — see "Cache behavior" below.
 
 ** The =elpaca-build-augment-test-watch= list
 
@@ -71,17 +71,32 @@ list is for packages you've been bitten by before.
 
 * Report columns
 
-| Column  | Meaning                                                 |
-|---------+---------------------------------------------------------|
-| Package | Symbol you asked about                                  |
-| Archive | =gnu=, =nongnu=, or =melpa= — whichever carried it     |
-| Version | Latest tarball version at audit time                    |
-| Status  | =ok=, =GAP=, =not-built=, =no-tarball=, or =error:MSG= |
-| Missing | First few basenames present in tarball but not in build |
+| Column  | Meaning                                                              |
+|---------+----------------------------------------------------------------------|
+| Package | Symbol you asked about                                               |
+| Archive | =gnu=, =nongnu=, or =melpa= — whichever carried it                  |
+| Version | Latest tarball version at audit time                                 |
+| Status  | =ok=, =GAP=, =not-built=, =no-tarball=, or =error:MSG=              |
+| Pinned  | =ref:...=, =tag:...=, =branch:...=, =version:...=, or empty (see below) |
+| Missing | First few basenames present in tarball but not in build              |
 
 =no-tarball= means =package.el= cannot install this package at all — github-only
 packages, local recipes, or GNU ELPA =:core= packages. Not a problem; just
 nothing to compare against.
+
+* Pinned recipes
+
+If your Elpaca recipe sets =:ref=, =:tag=, =:branch=, =:version=, or
+=:pin=, the installed source is deliberately held at a specific point in
+history. The archive, however, only serves the /latest/ tarball (and in
+MELPA's case, won't serve old ones at all), so a =GAP= on a pinned
+package may be real — build artifact genuinely missing — or may just
+reflect that upstream has moved on and the newer tarball ships a file
+your pinned revision never had.
+
+The Pinned column surfaces the ref so you can tell the difference at a
+glance. Investigate the =GAP= rows; ignore the ones that line up with
+the pin.
 
 * Version mismatch is expected
 
@@ -91,14 +106,19 @@ not matching versions. Filename-level parity is version-insensitive for the
 things we care about (did the =.info= manual get built, did the =.sty=
 files land) so this is fine, but worth knowing.
 
-* Refreshing
+* Cache behavior
 
-#+begin_example
-M-x elpaca-build-augment-test-refresh
-#+end_example
+Every audit refetches each archive's =archive-contents= (small — a few
+hundred KB) so the latest upstream version is always seen. The tarball
+itself is only downloaded when the cached =<pkg>-<version>/= directory
+isn't present on disk, which happens in exactly two cases:
 
-Clears the cached =archive-contents= and the extracted tarball directory.
-Next audit will refetch everything.
+- First audit of a package.
+- Upstream published a new version since the last audit — the old
+  =<pkg>-<oldversion>/= dir is deleted automatically before the new one
+  is fetched, so the cache doesn't grow unboundedly.
+
+There is deliberately no =refresh= command: refresh is implicit.
 
 * System requirements
 

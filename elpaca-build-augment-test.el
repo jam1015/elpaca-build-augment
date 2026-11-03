@@ -131,12 +131,27 @@ KIND is the symbol `tar' or `single' from archive-contents."
         (ext (if (eq kind 'single) "el" "tar")))
     (format "%s%s-%s.%s" base pkg version ext)))
 
+(defun elpaca-build-augment-test--gc-stale (pkg keep-version)
+  "Delete any cached PKG-* dir other than PKG-KEEP-VERSION.
+Keeps the cache size bounded as archives roll new versions."
+  (let ((root elpaca-build-augment-test-cache-dir)
+        (keep (format "%s-%s" pkg keep-version))
+        (prefix (format "%s-" pkg)))
+    (when (file-directory-p root)
+      (dolist (entry (directory-files root nil "\\`[^.]" t))
+        (when (and (string-prefix-p prefix entry)
+                   (not (equal entry keep))
+                   (file-directory-p (expand-file-name entry root)))
+          (delete-directory (expand-file-name entry root) t))))))
+
 (defun elpaca-build-augment-test--extracted-dir (pkg version kind)
   "Return the local directory where PKG VERSION should be extracted.
-Create it (and extract) if not already present."
+If PKG is already cached at VERSION, skip the download; otherwise fetch
+and extract.  Any cached PKG at a different version is deleted first."
   (let* ((root elpaca-build-augment-test-cache-dir)
          (dir  (expand-file-name (format "%s-%s" pkg version) root)))
     (unless (file-directory-p dir)
+      (elpaca-build-augment-test--gc-stale pkg version)
       (make-directory root t)
       (let* ((info (elpaca-build-augment-test--find-in-archives pkg))
              (label (car info))
@@ -179,19 +194,37 @@ Create it (and extract) if not already present."
     (and (file-directory-p dir) dir)))
 
 (cl-defstruct elpaca-build-augment-test--result
-  pkg archive version missing extra status)
+  pkg archive version missing extra status pin)
+
+(defun elpaca-build-augment-test--recipe-pin (pkg)
+  "Return a short string describing how PKG is pinned, or nil.
+Inspects the resolved Elpaca recipe for `:ref', `:tag', `:branch',
+`:pin', or `:version'.  A pinned recipe means the installed source
+is a specific commit/branch/tag, which may predate or diverge from
+the latest tarball on the archive -- so any `GAP' row for such a
+package may reflect version skew rather than a missing build step."
+  (when (fboundp 'elpaca-get)
+    (when-let* ((e (elpaca-get pkg))
+                (recipe (elpaca<-recipe e)))
+      (cond
+       ((plist-get recipe :ref)     (format "ref:%s"     (plist-get recipe :ref)))
+       ((plist-get recipe :tag)     (format "tag:%s"     (plist-get recipe :tag)))
+       ((plist-get recipe :branch)  (format "branch:%s"  (plist-get recipe :branch)))
+       ((plist-get recipe :version) (format "version:%s" (plist-get recipe :version)))
+       ((plist-get recipe :pin)     "pinned")))))
 
 (defun elpaca-build-augment-test--compare (pkg)
   "Return a result struct for PKG."
   (let* ((build (elpaca-build-augment-test--elpaca-build-dir pkg))
-         (info (elpaca-build-augment-test--find-in-archives pkg)))
+         (info (elpaca-build-augment-test--find-in-archives pkg))
+         (pin (elpaca-build-augment-test--recipe-pin pkg)))
     (cond
      ((null build)
       (make-elpaca-build-augment-test--result
-       :pkg pkg :status 'not-built))
+       :pkg pkg :pin pin :status 'not-built))
      ((null info)
       (make-elpaca-build-augment-test--result
-       :pkg pkg :status 'no-tarball))
+       :pkg pkg :pin pin :status 'no-tarball))
      (t
       (pcase-let ((`(,label ,version ,kind) info))
         (condition-case err
@@ -204,11 +237,12 @@ Create it (and extract) if not already present."
                    (extra (cl-set-difference build-files tar-files
                                              :test #'equal)))
               (make-elpaca-build-augment-test--result
-               :pkg pkg :archive label :version version
+               :pkg pkg :archive label :version version :pin pin
                :missing missing :extra extra
                :status (if missing 'gap 'ok)))
           (error (make-elpaca-build-augment-test--result
                   :pkg pkg :archive (car info) :version (cadr info)
+                  :pin pin
                   :status (cons 'error (error-message-string err))))))))))
 
 ;;;; Report buffer
@@ -221,6 +255,7 @@ Create it (and extract) if not already present."
          ("Archive" 8 t)
          ("Version" 18 t)
          ("Status"  10 t)
+         ("Pinned"  18 t)
          ("Missing" 40 nil)])
   (setq tabulated-list-padding 1)
   (tabulated-list-init-header))
@@ -244,6 +279,7 @@ Create it (and extract) if not already present."
                       (symbol-name a) "-")
                   (or (elpaca-build-augment-test--result-version r) "-")
                   (elpaca-build-augment-test--status-string status)
+                  (or (elpaca-build-augment-test--result-pin r) "")
                   (if missing
                       (mapconcat #'identity (seq-take missing 6) ", ")
                     "")))))
@@ -268,46 +304,50 @@ Create it (and extract) if not already present."
 
 ;;;###autoload
 (defun elpaca-build-augment-test (pkg)
-  "Audit one package: compare its Elpaca build dir against the tarball."
+  "Audit one package: compare its Elpaca build dir against the tarball.
+Always refetches `archive-contents' so the latest upstream version is
+seen; the tarball itself is only re-downloaded when the version has
+changed since the last audit."
   (interactive
    (list (intern (completing-read
                   "Package: "
                   (mapcar #'symbol-name
                           (elpaca-build-augment-test--queued-packages))
                   nil nil))))
+  (clrhash elpaca-build-augment-test--archive-cache)
   (elpaca-build-augment-test--show
    (list (elpaca-build-augment-test--compare pkg))))
 
 ;;;###autoload
 (defun elpaca-build-augment-test-all ()
-  "Audit every package Elpaca has queued; render results in a buffer."
+  "Audit every package Elpaca has queued; render results in a buffer.
+Always refetches `archive-contents' so the latest upstream version is
+seen; each tarball is only re-downloaded when its version has changed
+since the last audit."
   (interactive)
+  (clrhash elpaca-build-augment-test--archive-cache)
   (let ((pkgs (elpaca-build-augment-test--queued-packages)))
     (elpaca-build-augment-test--show
      (cl-loop for p in pkgs
               do (message "elpaca-build-augment-test: %s..." p)
               collect (elpaca-build-augment-test--compare p)))))
 
-;;;###autoload
-(defun elpaca-build-augment-test-refresh ()
-  "Drop cached archive-contents and extracted tarballs; next audit refetches."
-  (interactive)
-  (clrhash elpaca-build-augment-test--archive-cache)
-  (when (file-directory-p elpaca-build-augment-test-cache-dir)
-    (delete-directory elpaca-build-augment-test-cache-dir t))
-  (message "elpaca-build-augment-test: cache cleared"))
-
 (defun elpaca-build-augment-test--watch-run ()
   "Audit each `elpaca-build-augment-test-watch' package; message gaps."
+  (clrhash elpaca-build-augment-test--archive-cache)
   (dolist (pkg elpaca-build-augment-test-watch)
-    (let ((r (elpaca-build-augment-test--compare pkg)))
+    (let* ((r (elpaca-build-augment-test--compare pkg))
+           (pin (elpaca-build-augment-test--result-pin r))
+           (suffix (if pin (format " [pinned: %s -- gap may be version skew]" pin)
+                     "")))
       (pcase (elpaca-build-augment-test--result-status r)
-        ('gap (message "elpaca-build-augment-test: %s missing %s"
+        ('gap (message "elpaca-build-augment-test: %s missing %s%s"
                        pkg
                        (mapconcat #'identity
                                   (elpaca-build-augment-test--result-missing r)
-                                  ", ")))
-        ('ok  (message "elpaca-build-augment-test: %s ok" pkg))
+                                  ", ")
+                       suffix))
+        ('ok  (message "elpaca-build-augment-test: %s ok%s" pkg suffix))
         (_    nil)))))
 
 ;;;###autoload
