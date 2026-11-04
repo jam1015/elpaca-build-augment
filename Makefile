@@ -3,15 +3,24 @@ INFO  := elpaca-build-augment.info
 TEXI  := elpaca-build-augment.texi
 ORG   := README.org
 
-.PHONY: doc clean
+.PHONY: doc info clean
 
-doc: $(INFO)
+## Default target: build the shipped .texi from README.org.
+## Elpaca compiles .texi -> .info at install time, so the .texi is
+## the artifact committed to the repo.
+doc: $(TEXI)
 
-$(INFO): $(ORG)
+$(TEXI): $(ORG)
 	$(EMACS) -Q --batch \
 	  --eval "(require 'ox-texinfo)" \
 	  --eval "(find-file \"$(ORG)\")" \
-	  --eval "(org-texinfo-export-to-info)"
+	  --eval "(org-texinfo-export-to-texinfo)"
+
+## Optional local preview: also run makeinfo to produce the .info.
+info: $(INFO)
+
+$(INFO): $(TEXI)
+	makeinfo $(TEXI)
 
 clean:
 	rm -f $(INFO) $(TEXI)

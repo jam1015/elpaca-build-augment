@@ -41,6 +41,21 @@
 
 ;;; Code:
 
+;; Same sibling-path trick as in elpaca-build-augment.el: Elpaca's byte-
+;; compile subprocess runs with no Elpaca on `load-path'.  Our build dir
+;; sits as a sibling of Elpaca's own under <elpaca-builds-directory>, so
+;; "../elpaca" relative to our file finds it.  At runtime the user has
+;; already loaded Elpaca, so this is a no-op.
+(eval-when-compile
+  (let ((here (or (and (boundp 'byte-compile-current-file) byte-compile-current-file)
+                  load-file-name
+                  buffer-file-name)))
+    (when here
+      (let ((sibling (expand-file-name "../elpaca"
+                                       (file-name-directory here))))
+        (when (file-directory-p sibling)
+          (add-to-list 'load-path sibling))))))
+
 (require 'elpaca)
 (require 'elpaca-build-augment)
 (require 'cl-lib)

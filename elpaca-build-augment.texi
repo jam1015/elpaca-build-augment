@@ -1,0 +1,381 @@
+\input texinfo    @c -*- texinfo -*-
+@c %**start of header
+@setfilename elpaca-build-augment.info
+@settitle Elpaca Build Augment
+@documentencoding UTF-8
+@documentlanguage en
+@c %**end of header
+
+@dircategory Emacs
+@direntry
+* Elpaca Build Augment: (elpaca-build-augment). Replay ELPA build steps under Elpaca.
+@end direntry
+
+@finalout
+@titlepage
+@title Elpaca Build Augment
+@author Jordan Mandel
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top Elpaca Build Augment
+
+An extension for @uref{https://github.com/progfolio/elpaca, Elpaca} that replays
+per-package build steps upstream package archives run on their build servers@comma{}
+so packages install from source into a complete@comma{} feature-ready state — not a
+partial one.
+
+@end ifnottex
+
+@menu
+* The problem::
+* How it works::
+* Companion verifying parity against @samp{package.el}: Companion verifying parity against @samp{packageel}. 
+* Install and use::
+* Configuration::
+* Limitations::
+* Caveat install-time filesystem scan::
+* Regenerating the manual::
+* License::
+
+@detailmenu
+--- The Detailed Node Listing ---
+
+Configuration
+
+* Metadata source @samp{elpaca-build-augment-sources}::
+* Metadata caching @samp{elpaca-build-augment-cache-metadata}::
+* Audit watch list @samp{elpaca-build-augment-audit-watch}::
+* Introspection::
+* Refreshing the ELPA metadata::
+* Overriding on a per-package basis::
+
+@end detailmenu
+@end menu
+
+@node The problem
+@chapter The problem
+
+Elpaca installs a package by cloning its source@comma{} byte-compiling the elisp@comma{} and
+generating autoloads. For most packages that is everything needed. For roughly
+16% of GNU/NonGNU ELPA packages (and a smaller slice of MELPA packages)@comma{} there
+are additional build steps that upstream @emph{does} run — on the ELPA/MELPA build
+server — but that Elpaca does not replay locally.
+
+Concrete examples of what gets lost:
+
+@itemize
+@item
+AUC@TeX{} ships @samp{latex/preview.sty} and friends only after @samp{make elpa} runs.
+Without that step@comma{} the @samp{preview-latex} feature fails with @samp{File 'preview.sty'
+  not found.} at @LaTeX{} time.
+@item
+ESS@comma{} Eat@comma{} Evil@comma{} Bongo and dozens of others ship Info manuals that only exist
+after @samp{makeinfo} runs — in some cases with @samp{cd} into a @samp{doc/} subdirectory
+first so @samp{@@include} paths resolve@comma{} in others with a preceding @samp{make} to
+generate a @samp{version.texi}.
+@item
+A handful of packages (Hyperbole@comma{} Tramp@comma{} flymake-collection@comma{} etc.) need a
+@samp{make} target that produces a @samp{.el} file at runtime.
+@end itemize
+
+@samp{package.el} sidesteps all of this by downloading pre-built tarballs that the
+upstream build server already assembled. Elpaca installs from source@comma{} which is
+more flexible — pin a commit@comma{} follow a branch@comma{} patch locally — but means every
+build quirk would have to be replayed on the user's machine. This library does
+the replay.
+
+@node How it works
+@chapter How it works
+
+A single hook on @samp{elpaca-recipe-functions}. For each package Elpaca resolves@comma{}
+the hook branches:
+
+@enumerate
+@item
+@strong{Metadata-driven path.} If the package has a @samp{:make}@comma{} @samp{:doc}@comma{} or
+@samp{:shell-command} entry in GNU/NonGNU ELPA's @samp{elpa-packages} file (fetched on
+first use and cached locally)@comma{} synthesize exactly those commands:
+
+@example
+:shell-command CMD   -> sh -c CMD   in source dir
+:make TGT            -> make TGT    in source dir
+:doc "D/F.texi"      -> cd D && makeinfo F.texi -o F.info
+:doc "D/F.org"       -> cd D@comma{} run Emacs batch with ox-texinfo to export
+                        F.org to .texi (respecting #+export_file_name:
+                        and other org directives)@comma{} then makeinfo on
+                        the produced file.  Handles the many packages
+                        whose :doc source is a README.org (corfu@comma{}
+                        consult@comma{} vertico@comma{} etc.).
+@end example
+
+Then mirror ELPA's ``ship everything in source'' packaging rule@comma{} honoring
+@samp{:lisp-dir}@comma{} @samp{:ignored-files}@comma{} and @samp{:excludes} from the same entry.
+
+@item
+@strong{Heuristic path.} For MELPA-only packages (or ELPA entries without build
+fields): scan the source tree for @samp{.texi} files@comma{} keep ones that look like
+standalone manuals (have @samp{@@setfilename} or start with @samp{\input texinfo})@comma{} run
+@samp{makeinfo --force} on each from its own directory. @samp{@@include} fragments
+(fdl.texi@comma{} gpl.texi@comma{} etc.) are detected and skipped. This is a best-effort
+heuristic — no upstream metadata@comma{} no guarantees. It handles the normal
+case (one @samp{.texi} manual@comma{} maybe a few fragments@comma{} no exotic build pipeline)
+and quietly produces nothing for packages that don't fit. If a MELPA
+package has a weirder build (texi generated by a Makefile target@comma{} texi
+fetched over the network at build time@comma{} nested manuals@comma{} custom makeinfo
+flags)@comma{} you'll have to write your own @samp{:build} for that one.
+
+@item
+@strong{Respect existing @samp{:build}.} Recipes that already set @samp{:build} (e.g.
+@samp{elpaca-menu-org}'s custom pipeline for Org) are left alone.
+@end enumerate
+
+In both paths the library disables @samp{elpaca-build-docs} (which has multi-file
+@samp{makeinfo} bugs) and queues @samp{elpaca--install-info} so the @samp{dir} entry gets
+updated.
+
+@node Companion verifying parity against @samp{packageel}
+@chapter Companion: verifying parity against @samp{package.el}
+
+A sibling file@comma{} @uref{elpaca-build-augment-audit.el, elpaca-build-augment-audit.el}@comma{} downloads the latest tarball
+for each package from GNU/NonGNU ELPA or MELPA and diffs it against the
+Elpaca build dir@comma{} so you can confirm — per package or across the whole
+config — that nothing a @samp{package.el} user would have is missing from your
+Elpaca install.  See @uref{TEST.org, TEST.org} for the full writeup and the three entry
+points (@samp{M-x elpaca-build-augment-audit}@comma{} @samp{-audit-all}@comma{} and the opt-in
+@samp{elpaca-build-augment-audit-watch} list).
+
+@node Install and use
+@chapter Install and use
+
+System requirements: @samp{makeinfo} (part of texinfo)@comma{} @samp{make}@comma{} and @samp{sh} on @samp{PATH}.
+On Windows: MSYS2 or Git for Windows provides all three.
+
+The elisp block below goes @strong{below} Elpaca's own installer boilerplate — see
+@uref{https://github.com/progfolio/elpaca/blob/master/doc/manual.md#installer} for
+the boilerplate itself (copy it verbatim into your init before the block
+below).
+
+@lisp
+;; Install elpaca-build-augment via Elpaca and enable the hook in its
+;; body.  Elpaca resolves recipes synchronously at the moment each
+;; `(elpaca ...)' form is evaluated -- the clone/build pipeline is
+;; async@comma{} but the recipe-functions hook fires at queue time.  So the
+;; hook has to be *registered* (not just textually earlier) before
+;; any augmentable `(elpaca ...)' / `(use-package :ensure t)' form
+;; is evaluated.  `:wait t' on the recipe tells Elpaca to install@comma{}
+;; run the body (`-enable')@comma{} and only then let evaluation continue.
+(elpaca (elpaca-build-augment
+         :host github
+         :repo "jam1015/elpaca-build-augment"
+         :wait t)
+  ;; Optional configuration -- all have sensible defaults@comma{} uncomment
+  ;; only what you want to change.  See the "Configuration" section
+  ;; below for details.
+  ;;
+  ;; (setopt elpaca-build-augment-sources
+  ;;         elpaca-build-augment--sources-savannah)  ; default: emacsmirror
+  ;; (setopt elpaca-build-augment-cache-metadata nil) ; default: t
+  (elpaca-build-augment-enable)
+  ;; Optional: audit builds against package.el tarballs.  See TEST.org.
+  (require 'elpaca-build-augment-audit)
+  (setopt elpaca-build-augment-audit-watch '(auctex ess eat))
+  (elpaca-build-augment-audit-enable))
+
+;; -- Option A: use-package integration --
+;; No `:wait' needed here: Elpaca's built-in `elpaca-menu-extensions'
+;; already injects `:wait t' into the recipe for elpaca-use-package.
+(elpaca elpaca-use-package (elpaca-use-package-mode))
+
+(use-package auctex :ensure t :demand t) ; `make elpa' + makeinfo
+(use-package ess    :ensure t)           ; cd doc && makeinfo ess.texi
+(use-package eat    :ensure t)           ; makeinfo eat.texi@comma{} skip fragments
+(use-package bongo  :ensure t)           ; MELPA-only; heuristic scan finds bongo.texi
+
+;; -- Option B: raw elpaca --
+(elpaca evil)                            ; NonGNU ELPA@comma{} :doc + :ignored-files
+(elpaca sicp)                            ; MELPA-only; scan fails safely on broken texi
+@end lisp
+
+On first use the library fetches GNU and NonGNU ELPA's @samp{elpa-packages} files
+(by default from the emacsmirror GitHub mirrors) into
+@samp{<user-emacs-directory>/elpaca-build-augment-cache/}. No metadata is bundled
+with the package — the elisp does all the work of discovering per-package
+build structure.
+
+@node Configuration
+@chapter Configuration
+
+All options are plain @samp{defcustom=s; set them with =setopt} (or via @samp{M-x
+customize-group RET elpaca-build-augment}).
+
+@menu
+* Metadata source @samp{elpaca-build-augment-sources}::
+* Metadata caching @samp{elpaca-build-augment-cache-metadata}::
+* Audit watch list @samp{elpaca-build-augment-audit-watch}::
+* Introspection::
+* Refreshing the ELPA metadata::
+* Overriding on a per-package basis::
+@end menu
+
+@node Metadata source @samp{elpaca-build-augment-sources}
+@section Metadata source: @samp{elpaca-build-augment-sources}
+
+Where the @samp{elpa-packages} files come from. Two presets are shipped:
+
+@itemize
+@item
+@samp{elpaca-build-augment--sources-emacsmirror} (default) — the @samp{emacsmirror}
+GitHub mirrors of @samp{elpa.git} / @samp{nongnu-elpa.git}. Backed by GitHub's CDN@comma{}
+fast and stable.
+@item
+@samp{elpaca-build-augment--sources-savannah} — the upstream Savannah cgit
+endpoints. Authoritative@comma{} but cgit is frequently overloaded and returns 502
+error pages under traffic bursts. Opt in if you specifically want
+first-source reads.
+@end itemize
+
+You can also set the variable to an arbitrary alist to point at any other
+host (a local mirror@comma{} a corporate proxy@comma{} etc.). See the @samp{defcustom} docstring
+for the plist shape.
+
+@lisp
+;; Opt into Savannah upstream instead of emacsmirror.
+(setopt elpaca-build-augment-sources
+        elpaca-build-augment--sources-savannah)
+@end lisp
+
+@node Metadata caching @samp{elpaca-build-augment-cache-metadata}
+@section Metadata caching: @samp{elpaca-build-augment-cache-metadata}
+
+Boolean@comma{} default @samp{t}.
+
+@itemize
+@item
+@samp{t} — the fetched snapshots are persisted on disk under
+@samp{<user-emacs-directory>/elpaca-build-augment-cache/} and reused across
+Emacs sessions. Call @samp{M-x elpaca-build-augment-refresh} to pull fresh
+copies.
+@item
+@samp{nil} — no disk cache. The snapshots are fetched once per Emacs session
+into an in-memory index and reused for every package install in that
+session; @samp{M-x elpaca-build-augment-refresh} forces a refetch within a
+session.
+@end itemize
+
+Disk caching is recommended for normal use — the metadata changes slowly and
+a stale copy only costs you a build step or two on a newly-added field.
+Choose @samp{nil} if you specifically want every Emacs session to start from fresh
+upstream metadata.
+
+@lisp
+(setopt elpaca-build-augment-cache-metadata nil)
+@end lisp
+
+@node Audit watch list @samp{elpaca-build-augment-audit-watch}
+@section Audit watch list: @samp{elpaca-build-augment-audit-watch}
+
+List of package symbols that get an automatic parity report against
+@samp{package.el} tarballs after Elpaca finishes building them. Only consulted
+when @samp{(elpaca-build-augment-audit-enable)} has been called. See
+@uref{TEST.org, TEST.org} for details.
+
+@lisp
+(setopt elpaca-build-augment-audit-watch '(auctex ess eat))
+@end lisp
+
+@node Introspection
+@section Introspection
+
+See what the library would do for a specific package:
+
+@example
+M-x elpaca-build-augment-explain RET auctex RET
+@end example
+
+Prints the ELPA entry (if any) and the exact shell commands that would
+be injected.
+
+@node Refreshing the ELPA metadata
+@section Refreshing the ELPA metadata
+
+The cached @samp{elpa-packages} snapshots are fetched on first use. To pull fresh
+copies from upstream later:
+
+@example
+M-x elpaca-build-augment-refresh
+@end example
+
+@node Overriding on a per-package basis
+@section Overriding on a per-package basis
+
+Nothing library-specific is needed. The hook only ever returns @samp{:build}@comma{} and
+only when the user hasn't already set it. Everything else — @samp{:branch}@comma{} @samp{:repo}@comma{}
+@samp{:files}@comma{} @samp{:ignored-files} — can be adjusted inline in the @samp{(elpaca ...)} /
+@samp{(use-package ... :ensure (...))} form; Elpaca's recipe merging gives the
+user's declaration higher precedence than the menu's. To exempt a specific
+package from augmentation entirely@comma{} just declare its own @samp{:build} yourself —
+the hook sees the field is set and skips the package.
+
+@lisp
+;; Change a repo field inline — hook doesn't touch :branch@comma{} so it stays.
+(use-package somepkg :ensure (:branch "release"))
+
+;; Opt out of augmentation for one package by giving it an explicit :build.
+(use-package weirdpkg :ensure (:build nil))
+@end lisp
+
+@node Limitations
+@chapter Limitations
+
+@itemize
+@item
+Packages whose build requires a C compiler plus system libraries (pdf-tools'
+@samp{epdfinfo}@comma{} vterm's module@comma{} irony-mode's server) are installed as elisp only@comma{}
+same as under vanilla Elpaca and under @samp{package.el}. You'll still need the
+package's own @samp{M-x pdf-tools-install} / equivalent plus the system packages.
+
+@item
+GNU ELPA @samp{:core} packages (bind-key@comma{} eglot@comma{} eldoc@comma{} erc@comma{} …) are copies of
+files inside Emacs's own source tree@comma{} not independent repos. There is nothing
+for Elpaca to clone@comma{} so this library can't install them from source. You
+already have them bundled with Emacs anyway; if you specifically want the
+ELPA-newer version@comma{} use @samp{:type tar :inherit elpaca-menu-gnu-elpa}.
+@end itemize
+
+@node Caveat install-time filesystem scan
+@chapter Caveat: install-time filesystem scan
+
+Both paths recursively walk the package's source tree at install time — the
+ELPA path to build a flat @samp{(source-file . build-file)} pair list@comma{} the heuristic
+path to find @samp{.texi} manuals. The walk is cheap for normal packages (~10 ms per
+install) and happens only on install/rebuild@comma{} not on every Emacs startup@comma{} but
+it's unavoidable with elpaca's current internals: @samp{elpaca-generate-autoloads}
+and friends skip symlinked directories@comma{} so we can't take the simpler route of
+@samp{:files ("*" (:exclude ...))} and let elpaca symlink @samp{lisp/} as a whole
+directory — nested @samp{.el} files would be invisible to autoload scanning. We have
+to symlink files individually.
+
+If upstream Elpaca ever grew the ability to follow directory symlinks the walks
+here could be shrunk or removed entirely.
+
+@node Regenerating the manual
+@chapter Regenerating the manual
+
+@samp{elpaca-build-augment.texi} is generated from @samp{README.org} via
+@samp{ox-texinfo}. If you change the README@comma{} regenerate and commit it:
+
+@example
+make doc        # produces elpaca-build-augment.texi
+make info       # optional: locally preview the .info
+@end example
+
+@node License
+@chapter License
+
+GPLv3+. See @uref{LICENSE, LICENSE}.
+
+@bye

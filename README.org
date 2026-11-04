@@ -276,18 +276,13 @@ here could be shrunk or removed entirely.
 
 * Regenerating the manual
 
-The =elpaca-build-augment.info= file shipped with this repository is built
-from =README.org= via =ox-texinfo=. If you change the README, run
+=elpaca-build-augment.texi= is generated from =README.org= via
+=ox-texinfo=. If you change the README, regenerate and commit it:
 
 #+begin_src sh
-make doc
+make doc        # produces elpaca-build-augment.texi
+make info       # optional: locally preview the .info
 #+end_src
-
-and commit the updated =elpaca-build-augment.info= alongside your README
-change. The intermediate =.texi= is =.gitignore='d. Elpaca's default
-=:files= spec picks up =*.info= at the repository root automatically and
-its default build pipeline runs =elpaca--install-info=, so once the
-=.info= is present no recipe changes are needed to ship it.
 
 * License
 
