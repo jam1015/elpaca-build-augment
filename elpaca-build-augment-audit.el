@@ -108,7 +108,12 @@ A one-line parity report is written to *Messages* for each.  Use
 ;;;; Archive fetch & lookup
 
 (defun elpaca-build-augment-audit--archive-contents (label)
-  "Return parsed `archive-contents' for archive LABEL, fetching if needed."
+  "Return parsed `archive-contents' for archive LABEL, fetching if needed.
+Caches the parsed alist in `elpaca-build-augment-audit--archive-cache'
+(in-memory, no customize option).  Each public audit entry point
+clears that cache at start, so every audit run refetches
+`archive-contents' once per archive and reuses it for the rest of the
+run."
   (or (gethash label elpaca-build-augment-audit--archive-cache)
       (let* ((base (alist-get label elpaca-build-augment-audit-archives))
              (url (concat base "archive-contents"))
@@ -161,8 +166,12 @@ Keeps the cache size bounded as archives roll new versions."
 
 (defun elpaca-build-augment-audit--extracted-dir (pkg version kind)
   "Return the local directory where PKG VERSION should be extracted.
-If PKG is already cached at VERSION, skip the download; otherwise fetch
-and extract.  Any cached PKG at a different version is deleted first."
+Tarballs are cached on disk under `elpaca-build-augment-audit-cache-dir'
+(customize option, default
+`<user-emacs-directory>/elpaca-build-augment-audit-cache/').  If PKG is
+already cached at VERSION, skip the download.  Any cached PKG at a
+different version is deleted first (`--gc-stale') so the cache does
+not grow unbounded."
   (let* ((root elpaca-build-augment-audit-cache-dir)
          (dir  (expand-file-name (format "%s-%s" pkg version) root)))
     (unless (file-directory-p dir)
@@ -330,9 +339,16 @@ the menu sets `:tar' on all of them)."
 ;;;###autoload
 (defun elpaca-build-augment-audit (pkg)
   "Audit one package: compare its Elpaca build dir against the tarball.
-Always refetches `archive-contents' so the latest upstream version is
-seen; the tarball itself is only re-downloaded when the version has
-changed since the last audit."
+
+Caching:
+- `archive-contents' is refetched every call (in-memory
+  `--archive-cache', cleared on entry).
+- The tarball is cached on disk under
+  `elpaca-build-augment-audit-cache-dir' and only re-downloaded when
+  the upstream version has changed since the last audit.
+
+No `refresh' command; refresh is implicit in the clear-on-entry
+behavior above."
   (interactive
    (list (intern (completing-read
                   "Package: "
@@ -346,9 +362,14 @@ changed since the last audit."
 ;;;###autoload
 (defun elpaca-build-augment-audit-all ()
   "Audit every package Elpaca has queued; render results in a buffer.
-Always refetches `archive-contents' so the latest upstream version is
-seen; each tarball is only re-downloaded when its version has changed
-since the last audit."
+
+Caching:
+- `archive-contents' is refetched once per archive at the start of
+  the run (in-memory `--archive-cache', cleared on entry) and reused
+  across every package in that run.
+- Each tarball is cached on disk under
+  `elpaca-build-augment-audit-cache-dir' and only re-downloaded when
+  its upstream version has changed since the last audit."
   (interactive)
   (clrhash elpaca-build-augment-audit--archive-cache)
   (let ((pkgs (elpaca-build-augment-audit--queued-packages)))
@@ -377,7 +398,10 @@ since the last audit."
 
 ;;;###autoload
 (defun elpaca-build-augment-audit-enable ()
-  "Install an `elpaca-after-init-hook' that audits watched packages."
+  "Install an `elpaca-after-init-hook' that audits watched packages.
+The watch list is `elpaca-build-augment-audit-watch' (defcustom).
+Each run clears the in-memory `archive-contents' cache and reuses the
+on-disk tarball cache at `elpaca-build-augment-audit-cache-dir'."
   (interactive)
   (add-hook 'elpaca-after-init-hook
             #'elpaca-build-augment-audit--watch-run))

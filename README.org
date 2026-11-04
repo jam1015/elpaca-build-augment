@@ -136,13 +136,18 @@ style files, images, data files, templates.
 
 - *=M-x elpaca-build-augment-audit=.* Prompts for one package out of
   everything Elpaca currently has queued. Extracts the tarball under
-  =<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/=
-  and shows a one-row tabulated-list buffer with the diff.
+  =elpaca-build-augment-audit-cache-dir= (default
+  =<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/=)
+  and shows a one-row tabulated-list buffer with the diff. Refetches
+  =archive-contents= every call; the tarball itself is cached on disk
+  across runs (see "Audit cache behavior" below).
 
 - *=M-x elpaca-build-augment-audit-all=.* Iterates over every queued
   package. The tabulated-list buffer is sortable; sort by =Status= to
   pull =GAP= rows to the top. First run is slow (one tar fetch per
-  package); later runs hit the on-disk cache.
+  package); later runs hit the on-disk tarball cache at
+  =elpaca-build-augment-audit-cache-dir=. =archive-contents= is
+  refetched once per run and reused across all packages.
 
 - *=elpaca-build-augment-audit-watch=.* A defcustom list of packages
   audited automatically after Elpaca finishes init. Each result is
@@ -150,7 +155,7 @@ style files, images, data files, templates.
   drops =auctex.info= you see it the next time Emacs starts. Opt-in by
   design: the network fetch and tar extraction do not belong on every
   normal startup. The watch list is for packages you have been bitten
-  by before.
+  by before. Same caching behavior as the other entry points.
 
   #+begin_src elisp
   (setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
@@ -321,7 +326,11 @@ See what the library would do for a specific package:
 M-x elpaca-build-augment-explain RET auctex RET
 #+end_example
 
-Prints the ELPA entry (if any) and the exact shell commands that would run.
+Prints the ELPA entry (if any) and the exact shell commands that would
+run. This reads from the cached ELPA metadata index, loading it on
+first call per =elpaca-build-augment-cache-metadata= and
+=elpaca-build-augment-sources=. Call =M-x elpaca-build-augment-refresh=
+to force a reload from upstream.
 
 * Refreshing the ELPA metadata
 

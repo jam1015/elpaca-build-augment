@@ -230,7 +230,12 @@ package install."
   elpaca-build-augment--index)
 
 (defun elpaca-build-augment--entry (pkg)
-  "Return the ELPA entry for PKG, loading the index if not already loaded."
+  "Return the ELPA entry for PKG.
+Reads from `elpaca-build-augment--index', the in-memory alist of every
+GNU/NonGNU ELPA entry.  If the index is empty (first call this session),
+triggers a load via `--load-index'; that load either reads the on-disk
+snapshot cache or fetches from the network, per
+`elpaca-build-augment-cache-metadata'."
   (unless elpaca-build-augment--index (elpaca-build-augment--load-index))
   (alist-get pkg elpaca-build-augment--index))
 
@@ -309,7 +314,12 @@ Returns nil for unrecognized extensions."
 (defun elpaca-build-augment--synthesize-step (pkg entry)
   "Return a build-step function symbol for PKG, defining it if needed.
 Uses `elpaca-defscript' to generate a function that invokes each of
-PKG's synthesized shell commands in order, in the package source dir."
+PKG's synthesized shell commands in order, in the package source dir.
+
+Caches the synthesized function symbol in `elpaca-build-augment--step-cache'
+(per-session, in-memory, no customize option).  A changed ELPA entry mid-
+session is picked up the next time the index is reloaded, since
+`elpaca-build-augment-refresh' clears this cache."
   (or (gethash pkg elpaca-build-augment--step-cache)
       (let ((sym (intern (format "elpaca-build-augment--build-%s" pkg)))
             (commands (elpaca-build-augment--commands entry)))
@@ -522,7 +532,13 @@ build pipeline."
 
 ;;;###autoload
 (defun elpaca-build-augment-enable ()
-  "Install the contrib build-step hook."
+  "Install the contrib build-step hook.
+
+The hook consults a cached index of GNU/NonGNU ELPA `elpa-packages'
+metadata, built lazily on the first package install after enable.
+Caching behavior is controlled by `elpaca-build-augment-cache-metadata'
+(default t, on-disk cache at `elpaca-build-augment-cache-dir'); the
+source URLs are controlled by `elpaca-build-augment-sources'."
   (interactive)
   (add-hook 'elpaca-recipe-functions #'elpaca-build-augment--recipe-hook))
 
@@ -534,7 +550,11 @@ build pipeline."
 
 ;;;###autoload
 (defun elpaca-build-augment-explain (pkg)
-  "Print the build steps that would be applied to PKG."
+  "Print the build steps that would be applied to PKG.
+Consults the cached ELPA metadata index, loading it on first call per
+`elpaca-build-augment-cache-metadata' (disk cache) and
+`elpaca-build-augment-sources' (source URLs).  Call
+`elpaca-build-augment-refresh' to force a reload from upstream."
   (interactive
    (list (intern (completing-read "Package: "
                                   (progn (unless elpaca-build-augment--index

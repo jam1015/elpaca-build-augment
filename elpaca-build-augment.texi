@@ -242,14 +242,19 @@ style files@comma{} images@comma{} data files@comma{} templates.
 @item
 @strong{@samp{M-x elpaca-build-augment-audit}.} Prompts for one package out of
 everything Elpaca currently has queued. Extracts the tarball under
-@samp{<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/}
-and shows a one-row tabulated-list buffer with the diff.
+@samp{elpaca-build-augment-audit-cache-dir} (default
+@samp{<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/})
+and shows a one-row tabulated-list buffer with the diff. Refetches
+@samp{archive-contents} every call; the tarball itself is cached on disk
+across runs (see ``Audit cache behavior'' below).
 
 @item
 @strong{@samp{M-x elpaca-build-augment-audit-all}.} Iterates over every queued
 package. The tabulated-list buffer is sortable; sort by @samp{Status} to
 pull @samp{GAP} rows to the top. First run is slow (one tar fetch per
-package); later runs hit the on-disk cache.
+package); later runs hit the on-disk tarball cache at
+@samp{elpaca-build-augment-audit-cache-dir}. @samp{archive-contents} is
+refetched once per run and reused across all packages.
 
 @item
 @strong{@samp{elpaca-build-augment-audit-watch}.} A defcustom list of packages
@@ -258,7 +263,7 @@ written as one line to @samp{*Messages*}@comma{} so if a future upgrade silently
 drops @samp{auctex.info} you see it the next time Emacs starts. Opt-in by
 design: the network fetch and tar extraction do not belong on every
 normal startup. The watch list is for packages you have been bitten
-by before.
+by before. Same caching behavior as the other entry points.
 
 @lisp
 (setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
@@ -467,7 +472,11 @@ See what the library would do for a specific package:
 M-x elpaca-build-augment-explain RET auctex RET
 @end example
 
-Prints the ELPA entry (if any) and the exact shell commands that would run.
+Prints the ELPA entry (if any) and the exact shell commands that would
+run. This reads from the cached ELPA metadata index@comma{} loading it on
+first call per @samp{elpaca-build-augment-cache-metadata} and
+@samp{elpaca-build-augment-sources}. Call @samp{M-x elpaca-build-augment-refresh}
+to force a reload from upstream.
 
 @node Refreshing the ELPA metadata
 @chapter Refreshing the ELPA metadata
