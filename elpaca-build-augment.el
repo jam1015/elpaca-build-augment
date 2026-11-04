@@ -234,17 +234,16 @@ package install."
   (unless elpaca-build-augment--index (elpaca-build-augment--load-index))
   (alist-get pkg elpaca-build-augment--index))
 
-(defun elpaca-build-augment--entry-needs-help-p (entry)
-  "Non-nil if ENTRY declares a build-step or ELPA-specific packaging field.
-Packaging fields (`:renames', `:lisp-dir') route the package through the
-metadata path even without build steps, so that `populate-files' can
-apply the rename/flatten transforms (e.g. corfu's `extensions/' flatten)."
+(defun elpaca-build-augment--entry-has-commands-p (entry)
+  "Non-nil if ENTRY declares build commands we need to synthesize.
+Only `:make', `:doc', and `:shell-command' require a synthesized shell
+step.  Packaging fields (`:renames', `:lisp-dir', `:ignored-files',
+`:excludes') are consumed directly by `--build-populate-files', which
+runs for every ELPA package regardless of command presence."
   (let ((p (cdr entry)))
     (or (plist-get p :make)
         (plist-get p :doc)
-        (plist-get p :shell-command)
-        (plist-get p :renames)
-        (plist-get p :lisp-dir))))
+        (plist-get p :shell-command))))
 
 (defun elpaca-build-augment--doc-command (doc)
   "Return a shell command string that builds an .info from DOC.
@@ -486,14 +485,19 @@ prefixes accordingly (so e.g. corfu's `extensions/' subdir flattens)."
 
 (defun elpaca-build-augment--recipe-hook (recipe)
   "Function on `elpaca-recipe-functions'.
-Branches on whether the package has GNU/NonGNU ELPA build metadata:
+Branches on the package's presence in GNU/NonGNU ELPA metadata:
 
-- With ELPA metadata declaring `:make', `:doc', or `:shell-command':
-  inject the specific commands and mirror ELPA's \"ship everything\"
-  packaging via `elpaca-build-augment--build-populate-files'.
-- Otherwise: inject a filesystem-driven makeinfo pass that handles
-  packages whose only build need is compiling .texi manuals (the
-  common MELPA case).  Falls silent for packages shipping no .texi.
+- Entry present, declares `:make'/`:doc'/`:shell-command': synthesize
+  the specific commands, then run `--build-populate-files' to mirror
+  ELPA's \"ship everything in source\" packaging.
+- Entry present, no build commands: run `--build-populate-files' only.
+  ELPA's `elpa-admin.el' applies whole-source packaging to every entry,
+  so merely appearing in `elpa-packages' qualifies a package for it.
+  This is what gets non-elisp files (data tables, snippets, Scheme
+  glue, images) into the build dir for packages that declare nothing
+  beyond a `:url'.
+- No entry: run `--build-scan-and-makeinfo' (MELPA-style heuristic
+  that compiles any standalone .texi manuals it finds in source).
 
 Skipped entirely for recipes that already carry an explicit `:build'
 field (e.g. Org's menu entry), to avoid clobbering a maintainer-set
@@ -502,13 +506,15 @@ build pipeline."
               (pkg (intern pkg-name))
               ((not (plist-member recipe :build))))
     (let* ((entry (elpaca-build-augment--entry pkg))
-           (elpa-help (and entry
-                           (elpaca-build-augment--entry-needs-help-p entry)))
            (before-steps
-            (if elpa-help
-                (list (elpaca-build-augment--synthesize-step pkg entry)
-                      'elpaca-build-augment--build-populate-files)
-              (list 'elpaca-build-augment--build-scan-and-makeinfo))))
+            (cond
+             ((and entry (elpaca-build-augment--entry-has-commands-p entry))
+              (list (elpaca-build-augment--synthesize-step pkg entry)
+                    'elpaca-build-augment--build-populate-files))
+             (entry
+              (list 'elpaca-build-augment--build-populate-files))
+             (t
+              (list 'elpaca-build-augment--build-scan-and-makeinfo)))))
       `(:build ((:not elpaca-build-docs)
                 (:before elpaca-build-link ,@before-steps)
                 (:after elpaca-build-link
@@ -539,16 +545,19 @@ build pipeline."
     (with-output-to-temp-buffer "*elpaca-build-augment*"
       (princ (format "Package: %s\n\n" pkg))
       (cond
-       ((and entry (elpaca-build-augment--entry-needs-help-p entry))
+       ((and entry (elpaca-build-augment--entry-has-commands-p entry))
         (princ (format "ELPA entry:\n  %S\n\n" entry))
         (princ "ELPA-driven path -- synthesized steps (run in source dir):\n")
         (dolist (cmd (elpaca-build-augment--commands entry))
           (princ (format "  %s\n" (mapconcat #'identity cmd " "))))
         (princ "Followed by populate-files to mirror ELPA's packaging model.\n"))
+       (entry
+        (princ (format "ELPA entry (no build commands):\n  %S\n\n" entry))
+        (princ "ELPA-driven path -- populate-files only.  Mirrors ELPA's\n")
+        (princ "whole-source packaging so non-elisp files (data tables,\n")
+        (princ "snippets, images, etc.) land in the build dir.\n"))
        (t
-        (if entry
-            (princ (format "ELPA entry (no build fields):\n  %S\n\n" entry))
-          (princ "No entry in GNU/NonGNU ELPA snapshots.\n\n"))
+        (princ "No entry in GNU/NonGNU ELPA snapshots.\n\n")
         (princ "Generic path -- at install time, scan source for\n")
         (princ "standalone .texi files (any with @setfilename) and run\n")
         (princ "makeinfo on each from its own directory.  No-op if the\n")
