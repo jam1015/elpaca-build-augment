@@ -7,208 +7,307 @@
 #+TEXINFO_DIR_DESC: Replay ELPA build steps under Elpaca.
 #+OPTIONS: ':t toc:t
 
-An extension for [[https://github.com/progfolio/elpaca][Elpaca]] that replays
-per-package build steps upstream package archives run on their build servers,
-so packages install from source into a complete, feature-ready state — not a
-partial one.
+An extension for [[https://github.com/progfolio/elpaca][Elpaca]] that runs the
+per-package build steps GNU/NonGNU ELPA and MELPA run on their build
+servers. Without it, packages that rely on those steps install from source
+in an incomplete state.
 
 * The problem
 
-Elpaca installs a package by cloning its source, byte-compiling the elisp, and
-generating autoloads. For most packages that is everything needed. For roughly
-16% of GNU/NonGNU ELPA packages (and a smaller slice of MELPA packages), there
-are additional build steps that upstream /does/ run — on the ELPA/MELPA build
-server — but that Elpaca does not replay locally.
+Elpaca installs a package by cloning the source, byte-compiling the elisp,
+and generating autoloads. For most packages that is enough. For about 16% of
+GNU/NonGNU ELPA packages and a smaller slice of MELPA, upstream also runs
+extra build steps that Elpaca skips.
 
-Concrete examples of what gets lost:
+Some examples of what goes missing:
 
-- AUCTeX ships =latex/preview.sty= and friends only after =make elpa= runs.
-  Without that step, the =preview-latex= feature fails with =File 'preview.sty'
-  not found.= at LaTeX time.
-- ESS, Eat, Evil, Bongo and dozens of others ship Info manuals that only exist
-  after =makeinfo= runs — in some cases with =cd= into a =doc/= subdirectory
-  first so =@include= paths resolve, in others with a preceding =make= to
-  generate a =version.texi=.
-- A handful of packages (Hyperbole, Tramp, flymake-collection, etc.) need a
-  =make= target that produces a =.el= file at runtime.
+- AUCTeX ships =latex/preview.sty= only after =make elpa= runs. Without
+  that, =preview-latex= fails at LaTeX time with =File 'preview.sty' not
+  found.=
+- ESS, Eat, Evil, Bongo and many others ship Info manuals that only exist
+  after =makeinfo= runs. Some need a =cd= into =doc/= so =@include= paths
+  resolve; some need a preceding =make= target to generate =version.texi=.
+- Hyperbole, Tramp, flymake-collection and a few others need a =make=
+  target that writes a =.el= file.
 
-=package.el= sidesteps all of this by downloading pre-built tarballs that the
-upstream build server already assembled. Elpaca installs from source, which is
-more flexible — pin a commit, follow a branch, patch locally — but means every
-build quirk would have to be replayed on the user's machine. This library does
-the replay.
+=package.el= sidesteps all of this by downloading pre-built tarballs.
+Elpaca installs from source, which lets you pin commits, follow branches,
+and patch locally, but every upstream build step has to run on your
+machine. This package runs them.
 
 * How it works
 
-A single hook on =elpaca-recipe-functions=. For each package Elpaca resolves,
-the hook branches:
+The package adds one hook to =elpaca-recipe-functions=. For each package
+Elpaca resolves, the hook picks one of two paths.
 
-1. *Metadata-driven path.* If the package has a =:make=, =:doc=, or
-   =:shell-command= entry in GNU/NonGNU ELPA's =elpa-packages= file (fetched on
-   first use and cached locally), synthesize exactly those commands:
+** Metadata-driven path
 
-   #+begin_example
-   :shell-command CMD   -> sh -c CMD   in source dir
-   :make TGT            -> make TGT    in source dir
-   :doc "D/F.texi"      -> cd D && makeinfo F.texi -o F.info
-   :doc "D/F.org"       -> cd D, run Emacs batch with ox-texinfo to export
-                           F.org to .texi (respecting #+export_file_name:
-                           and other org directives), then makeinfo on
-                           the produced file.  Handles the many packages
-                           whose :doc source is a README.org (corfu,
-                           consult, vertico, etc.).
-   #+end_example
+If the package has a =:make=, =:doc=, or =:shell-command= entry in
+GNU/NonGNU ELPA's =elpa-packages= file, the hook synthesizes those commands:
 
-   Then mirror ELPA's "ship everything in source" packaging rule, honoring
-   =:lisp-dir=, =:ignored-files=, and =:excludes= from the same entry.
+#+begin_example
+:shell-command CMD   ->  sh -c CMD        in source dir
+:make TGT            ->  make TGT         in source dir
+:doc "D/F.texi"      ->  cd D && makeinfo F.texi -o F.info
+:doc "D/F.org"       ->  cd D, export F.org to .texi via ox-texinfo,
+                         then makeinfo on the result. Covers packages
+                         whose :doc source is a README.org (corfu,
+                         consult, vertico, etc.).
+#+end_example
 
-2. *Heuristic path.* For MELPA-only packages (or ELPA entries without build
-   fields): scan the source tree for =.texi= files, keep ones that look like
-   standalone manuals (have =@setfilename= or start with =\input texinfo=), run
-   =makeinfo --force= on each from its own directory. =@include= fragments
-   (fdl.texi, gpl.texi, etc.) are detected and skipped. This is a best-effort
-   heuristic — no upstream metadata, no guarantees. It handles the normal
-   case (one =.texi= manual, maybe a few fragments, no exotic build pipeline)
-   and quietly produces nothing for packages that don't fit. If a MELPA
-   package has a weirder build (texi generated by a Makefile target, texi
-   fetched over the network at build time, nested manuals, custom makeinfo
-   flags), you'll have to write your own =:build= for that one.
+The =elpa-packages= file is fetched on first use and cached.
 
-3. *Respect existing =:build=.* Recipes that already set =:build= (e.g.
-   =elpaca-menu-org='s custom pipeline for Org) are left alone.
+The hook also mirrors ELPA's packaging rule (ship everything in source
+minus a known-junk list), honoring =:lisp-dir=, =:ignored-files=, and
+=:excludes= from the same entry.
 
-In both paths the library disables =elpaca-build-docs= (which has multi-file
-=makeinfo= bugs) and queues =elpaca--install-info= so the =dir= entry gets
-updated.
+** Heuristic path
 
-* Companion: verifying parity against =package.el=
+For MELPA-only packages, and ELPA entries with no build fields, the hook
+scans the source tree for =.texi= files. Files that look like standalone
+manuals (contain =@setfilename= or start with =\input texinfo=) are
+compiled with =makeinfo --force= from their own directory so =@include=
+paths resolve. Fragments like =fdl.texi= and =gpl.texi= are detected and
+skipped.
 
-A sibling file, [[file:elpaca-build-augment-audit.el][elpaca-build-augment-audit.el]], downloads the latest tarball
-for each package from GNU/NonGNU ELPA or MELPA and diffs it against the
-Elpaca build dir, so you can confirm — per package or across the whole
-config — that nothing a =package.el= user would have is missing from your
-Elpaca install.  See [[file:TEST.org][TEST.org]] for the full writeup and the three entry
-points (=M-x elpaca-build-augment-audit=, =-audit-all=, and the opt-in
-=elpaca-build-augment-audit-watch= list).
+This path has no upstream metadata to lean on and makes no guarantees. It
+handles the common case: one =.texi= manual, maybe a few fragments, no
+exotic build. For stranger builds (texi generated by a Makefile target,
+texi fetched over the network at build time, nested manuals, custom
+makeinfo flags), write your own =:build= for that package.
 
-* Install and use
+** Existing =:build= fields are respected
 
-System requirements: =makeinfo= (part of texinfo), =make=, and =sh= on =PATH=.
-On Windows: MSYS2 or Git for Windows provides all three.
+Recipes that already declare =:build= (for example =elpaca-menu-org='s
+custom pipeline for Org) are left alone.
 
-The elisp block below goes *below* Elpaca's own installer boilerplate — see
-[[https://github.com/progfolio/elpaca/blob/master/doc/manual.md#installer]] for
-the boilerplate itself (copy it verbatim into your init before the block
-below).
+** Info integration
+
+Both paths disable Elpaca's default =elpaca-build-docs= step (which has
+multi-file =makeinfo= bugs) and queue =elpaca--install-info= so the Info
+=dir= entry gets updated.
+
+* Companion: audit against =package.el=
+
+The sibling file [[file:elpaca-build-augment-audit.el][elpaca-build-augment-audit.el]] checks that an Elpaca
+install has every file a =package.el= install would have. It downloads
+the latest tarball from GNU ELPA, NonGNU ELPA, or MELPA for a package you
+have installed and diffs the two trees.
+
+The question it answers: for this package, am I missing anything that
+=package.el= users would have gotten?
+
+Even with =elpaca-build-augment= replaying the upstream build steps
+locally, an independent check is useful. Run the audit when you first
+install a new package, or when a feature that should work does not.
+
+** What gets compared
+
+File basenames only, not full paths. =package.el= flattens the layout
+and Elpaca preserves the repo tree, so path-level diffs are noise.
+
+Elisp output and metadata are filtered out by default (customizable via
+=elpaca-build-augment-audit-ignore-regexps=):
+
+- =*.el=, =*.elc=
+- =*-autoloads.el=, =*-pkg.el=
+- =dir=, =.dir-locals.el=
+- =LICENSE=, =COPYING=, =COPYRIGHT=
+- =README*=, =NEWS=, =AUTHORS=, =ChangeLog*=, =TODO=
+- =*.md=, =*.rst=, =*.org=, =*.txt=
+- VCS droppings
+
+What is left is what you care about: =.info= manuals, =.sty= and =.cls=
+style files, images, data files, templates.
+
+** Entry points
+
+*** =M-x elpaca-build-augment-audit=
+
+Prompts for one package out of everything Elpaca currently has queued.
+Extracts the tarball under
+=<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/=
+and shows a one-row tabulated-list buffer with the diff.
+
+*** =M-x elpaca-build-augment-audit-all=
+
+Iterates over every queued package. The tabulated-list buffer is
+sortable; sort by =Status= to pull =GAP= rows to the top. The first run
+is slow (one tar fetch per package); later runs hit the on-disk cache.
+
+*** The =elpaca-build-augment-audit-watch= list
 
 #+begin_src elisp
-;; Install elpaca-build-augment via Elpaca and enable the hook in its
-;; body.  Elpaca resolves recipes synchronously at the moment each
-;; `(elpaca ...)' form is evaluated -- the clone/build pipeline is
-;; async, but the recipe-functions hook fires at queue time.  So the
-;; hook has to be *registered* (not just textually earlier) before
-;; any augmentable `(elpaca ...)' / `(use-package :ensure t)' form
-;; is evaluated.  `:wait t' on the recipe tells Elpaca to install,
-;; run the body (`-enable'), and only then let evaluation continue.
+(setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
+(elpaca-build-augment-audit-enable)
+#+end_src
+
+Installs an =elpaca-after-init-hook= that audits every package in the
+list once Elpaca finishes init. Each result is written as one line to
+=*Messages*=, so if a future upgrade silently drops =auctex.info= you
+see it the next time Emacs starts.
+
+Opt-in by design. The network fetch and tar extraction do not belong on
+every normal startup. The watch list is for packages you have been
+bitten by before.
+
+** Report columns
+
+| Column  | Meaning                                                              |
+|---------+----------------------------------------------------------------------|
+| Package | Symbol you asked about                                               |
+| Archive | =gnu=, =nongnu=, or =melpa=, whichever carries it                    |
+| Version | Latest tarball version at audit time                                 |
+| Status  | =ok=, =GAP=, =not-built=, =no-tarball=, or =error:MSG=               |
+| Pinned  | =ref:...=, =tag:...=, =tar:...=, =branch:...=, =version:...=, or empty |
+| Missing | First few basenames present in tarball but not in the build         |
+
+=no-tarball= means =package.el= cannot install the package at all:
+github-only recipes, local recipes, or GNU ELPA =:core= packages. Not a
+problem, just nothing to compare against.
+
+** Pinned recipes
+
+If your Elpaca recipe sets =:ref=, =:tag=, =:tar=, =:branch=, =:version=,
+or =:pin=, the installed source is held at a specific point in history.
+(=:tar= is set by every GNU ELPA menu entry to track the archive's
+released version; when it matches the archive's latest version exactly,
+no skew is possible and the =Pinned= column stays empty.) The archive
+only serves the latest tarball, and MELPA will not serve old ones at
+all, so a =GAP= on a pinned package may be a real missing build
+artifact or may just reflect that upstream has moved on and the newer
+tarball ships a file your pinned revision never had.
+
+The =Pinned= column surfaces the ref so you can tell the difference.
+Investigate the =GAP= rows; ignore the ones that line up with the pin.
+
+** Version mismatch is expected
+
+Elpaca tracks a git commit; =package.el= ships a dated snapshot of the
+same upstream. The audit compares the latest tarball against your
+current build, not matching versions. Filename-level parity is
+version-insensitive for the things that matter (did the =.info= manual
+get built, did the =.sty= files land), so this is fine, but worth
+knowing.
+
+** Audit cache behavior
+
+Every audit refetches each archive's =archive-contents= (a few hundred
+KB) so the latest upstream version is always seen. The tarball itself
+is only downloaded when the cached =<pkg>-<version>/= directory is not
+present on disk, which happens in two cases:
+
+- First audit of a package.
+- Upstream published a new version since the last audit. The old
+  =<pkg>-<oldversion>/= dir is deleted before the new one is fetched,
+  so the cache does not grow unbounded.
+
+There is no =refresh= command; refresh is implicit.
+
+** Audit system requirements
+
+=tar= on =PATH=. The URL fetches use Emacs's built-in =url.el=; no
+=curl= needed.
+
+* Installing
+
+Requirements on =PATH=: =makeinfo= (from texinfo), =make=, =sh=. On
+Windows, MSYS2 or Git for Windows provides all three.
+
+The block below goes after Elpaca's own installer boilerplate. See
+[[https://github.com/progfolio/elpaca/blob/master/doc/manual.md#installer]]
+for the boilerplate.
+
+#+begin_src elisp
+;; :wait t tells Elpaca to install this package and run the body
+;; before continuing. The hook has to be registered before any later
+;; (elpaca ...) or (use-package :ensure t) form is evaluated.
 (elpaca (elpaca-build-augment
          :host github
          :repo "jam1015/elpaca-build-augment"
          :wait t)
-  ;; Optional configuration -- all have sensible defaults, uncomment
-  ;; only what you want to change.  See the "Configuration" section
-  ;; below for details.
-  ;;
+  ;; Optional configuration. All options have defaults; uncomment to change.
   ;; (setopt elpaca-build-augment-sources
   ;;         elpaca-build-augment--sources-savannah)  ; default: emacsmirror
   ;; (setopt elpaca-build-augment-cache-metadata nil) ; default: t
   (elpaca-build-augment-enable)
-  ;; Optional: audit builds against package.el tarballs.  See TEST.org.
+  ;; Optional: audit builds against package.el tarballs.
   (require 'elpaca-build-augment-audit)
   (setopt elpaca-build-augment-audit-watch '(auctex ess eat))
   (elpaca-build-augment-audit-enable))
 
-;; -- Option A: use-package integration --
-;; No `:wait' needed here: Elpaca's built-in `elpaca-menu-extensions'
-;; already injects `:wait t' into the recipe for elpaca-use-package.
+;; Elpaca's built-in menu injects :wait t for elpaca-use-package.
 (elpaca elpaca-use-package (elpaca-use-package-mode))
 
-(use-package auctex :ensure t :demand t) ; `make elpa' + makeinfo
+(use-package auctex :ensure t :demand t) ; make elpa + makeinfo
 (use-package ess    :ensure t)           ; cd doc && makeinfo ess.texi
-(use-package eat    :ensure t)           ; makeinfo eat.texi, skip fragments
-(use-package bongo  :ensure t)           ; MELPA-only; heuristic scan finds bongo.texi
+(use-package eat    :ensure t)           ; makeinfo eat.texi
+(use-package bongo  :ensure t)           ; MELPA-only, heuristic path
 
-;; -- Option B: raw elpaca --
-(elpaca evil)                            ; NonGNU ELPA, :doc + :ignored-files
-(elpaca sicp)                            ; MELPA-only; scan fails safely on broken texi
+(elpaca evil)                            ; NonGNU ELPA :doc + :ignored-files
+(elpaca sicp)                            ; MELPA-only
 #+end_src
 
-On first use the library fetches GNU and NonGNU ELPA's =elpa-packages= files
-(by default from the emacsmirror GitHub mirrors) into
-=<user-emacs-directory>/elpaca-build-augment-cache/=. No metadata is bundled
-with the package — the elisp does all the work of discovering per-package
-build structure.
+On first use the library fetches the =elpa-packages= files from the
+emacsmirror GitHub mirrors (by default) into
+=<user-emacs-directory>/elpaca-build-augment-cache/=. No metadata ships
+with the package.
 
 * Configuration
 
-All options are plain =defcustom=s; set them with =setopt= (or via =M-x
-customize-group RET elpaca-build-augment=).
+All options are plain =defcustom=s. Set them with =setopt=, or via =M-x
+customize-group RET elpaca-build-augment=.
 
-** Metadata source: =elpaca-build-augment-sources=
+** =elpaca-build-augment-sources=
 
-Where the =elpa-packages= files come from. Two presets are shipped:
+Where the =elpa-packages= files come from. Two presets ship with the
+package:
 
-- =elpaca-build-augment--sources-emacsmirror= (default) — the =emacsmirror=
-  GitHub mirrors of =elpa.git= / =nongnu-elpa.git=. Backed by GitHub's CDN,
-  fast and stable.
-- =elpaca-build-augment--sources-savannah= — the upstream Savannah cgit
-  endpoints. Authoritative, but cgit is frequently overloaded and returns 502
-  error pages under traffic bursts. Opt in if you specifically want
-  first-source reads.
+- =elpaca-build-augment--sources-emacsmirror= (default). The =emacsmirror=
+  GitHub mirrors of =elpa.git= and =nongnu-elpa.git=, served by GitHub's
+  CDN.
+- =elpaca-build-augment--sources-savannah=. The Savannah cgit endpoints.
+  Authoritative, but cgit often returns 502 error pages under load.
 
-You can also set the variable to an arbitrary alist to point at any other
-host (a local mirror, a corporate proxy, etc.). See the =defcustom= docstring
-for the plist shape.
+You can also set the variable to any alist to point at another host (a
+local mirror, a corporate proxy, etc.). See the =defcustom= docstring for
+the plist shape.
 
 #+begin_src elisp
-;; Opt into Savannah upstream instead of emacsmirror.
 (setopt elpaca-build-augment-sources
         elpaca-build-augment--sources-savannah)
 #+end_src
 
-** Metadata caching: =elpaca-build-augment-cache-metadata=
+** =elpaca-build-augment-cache-metadata=
 
-Boolean, default =t=.
+Boolean. Default =t=.
 
-- =t= — the fetched snapshots are persisted on disk under
-  =<user-emacs-directory>/elpaca-build-augment-cache/= and reused across
-  Emacs sessions. Call =M-x elpaca-build-augment-refresh= to pull fresh
-  copies.
-- =nil= — no disk cache. The snapshots are fetched once per Emacs session
-  into an in-memory index and reused for every package install in that
-  session; =M-x elpaca-build-augment-refresh= forces a refetch within a
-  session.
+- =t=. Fetched snapshots persist on disk at
+  =<user-emacs-directory>/elpaca-build-augment-cache/= and are reused
+  across Emacs sessions. Call =M-x elpaca-build-augment-refresh= to pull
+  fresh copies.
+- =nil=. No disk cache. Snapshots are fetched once per Emacs session into
+  an in-memory index. =M-x elpaca-build-augment-refresh= forces a refetch
+  within a session.
 
-Disk caching is recommended for normal use — the metadata changes slowly and
-a stale copy only costs you a build step or two on a newly-added field.
-Choose =nil= if you specifically want every Emacs session to start from fresh
-upstream metadata.
+Disk caching is the recommended default. The metadata changes slowly, and
+a stale copy only costs you a build step or two on recently-added fields.
 
 #+begin_src elisp
 (setopt elpaca-build-augment-cache-metadata nil)
 #+end_src
 
-** Audit watch list: =elpaca-build-augment-audit-watch=
+** =elpaca-build-augment-audit-watch=
 
-List of package symbols that get an automatic parity report against
-=package.el= tarballs after Elpaca finishes building them. Only consulted
-when =(elpaca-build-augment-audit-enable)= has been called. See
-[[file:TEST.org][TEST.org]] for details.
+List of package symbols to audit automatically after Elpaca finishes
+building them. Only consulted when =(elpaca-build-augment-audit-enable)=
+has been called. See the audit chapter above.
 
 #+begin_src elisp
 (setopt elpaca-build-augment-audit-watch '(auctex ess eat))
 #+end_src
 
-** Introspection
+* Introspection
 
 See what the library would do for a specific package:
 
@@ -216,63 +315,61 @@ See what the library would do for a specific package:
 M-x elpaca-build-augment-explain RET auctex RET
 #+end_example
 
-Prints the ELPA entry (if any) and the exact shell commands that would
-be injected.
+Prints the ELPA entry (if any) and the exact shell commands that would run.
 
-** Refreshing the ELPA metadata
+* Refreshing the ELPA metadata
 
-The cached =elpa-packages= snapshots are fetched on first use. To pull fresh
-copies from upstream later:
+Pull fresh snapshots from upstream:
 
 #+begin_example
 M-x elpaca-build-augment-refresh
 #+end_example
 
-** Overriding on a per-package basis
+* Overriding on a per-package basis
 
-Nothing library-specific is needed. The hook only ever returns =:build=, and
-only when the user hasn't already set it. Everything else — =:branch=, =:repo=,
-=:files=, =:ignored-files= — can be adjusted inline in the =(elpaca ...)= /
-=(use-package ... :ensure (...))= form; Elpaca's recipe merging gives the
-user's declaration higher precedence than the menu's. To exempt a specific
-package from augmentation entirely, just declare its own =:build= yourself —
-the hook sees the field is set and skips the package.
+Nothing library-specific is needed. The hook only sets =:build=, and only
+when the user has not. Other recipe fields (=:branch=, =:repo=, =:files=,
+=:ignored-files=) can be set inline in =(elpaca ...)= or =(use-package
+... :ensure (...))=. Elpaca's recipe merging gives the user's declaration
+higher precedence than the menu's. To opt a specific package out of
+augmentation, give it an explicit =:build=.
 
 #+begin_src elisp
-;; Change a repo field inline — hook doesn't touch :branch, so it stays.
+;; The hook does not touch :branch, so it stays.
 (use-package somepkg :ensure (:branch "release"))
 
-;; Opt out of augmentation for one package by giving it an explicit :build.
+;; Opt out of augmentation.
 (use-package weirdpkg :ensure (:build nil))
 #+end_src
 
 * Limitations
 
-- Packages whose build requires a C compiler plus system libraries (pdf-tools'
-  =epdfinfo=, vterm's module, irony-mode's server) are installed as elisp only,
-  same as under vanilla Elpaca and under =package.el=. You'll still need the
-  package's own =M-x pdf-tools-install= / equivalent plus the system packages.
+- Packages whose build needs a C compiler plus system libraries
+  (pdf-tools' =epdfinfo=, vterm's module, irony-mode's server) install as
+  elisp only, same as under vanilla Elpaca and under =package.el=. Run the
+  package's own =M-x pdf-tools-install= or equivalent, and install the
+  system packages separately.
+- GNU ELPA =:core= packages (bind-key, eglot, eldoc, erc, ...) are copies
+  of files from Emacs's own source tree, not independent repos. There is
+  nothing for Elpaca to clone, so this library cannot install them from
+  source. If you want the ELPA-newer version, use =:type tar :inherit
+  elpaca-menu-gnu-elpa=.
 
-- GNU ELPA =:core= packages (bind-key, eglot, eldoc, erc, …) are copies of
-  files inside Emacs's own source tree, not independent repos. There is nothing
-  for Elpaca to clone, so this library can't install them from source. You
-  already have them bundled with Emacs anyway; if you specifically want the
-  ELPA-newer version, use =:type tar :inherit elpaca-menu-gnu-elpa=.
+* Install-time filesystem scan
 
-* Caveat: install-time filesystem scan
+Both paths walk the package's source tree at install time. The ELPA path
+builds a flat =(source-file . build-file)= pair list; the heuristic path
+looks for =.texi= manuals. The walk takes about 10 ms per install and only
+runs on install or rebuild, not at startup.
 
-Both paths recursively walk the package's source tree at install time — the
-ELPA path to build a flat =(source-file . build-file)= pair list, the heuristic
-path to find =.texi= manuals. The walk is cheap for normal packages (~10 ms per
-install) and happens only on install/rebuild, not on every Emacs startup, but
-it's unavoidable with elpaca's current internals: =elpaca-generate-autoloads=
-and friends skip symlinked directories, so we can't take the simpler route of
-=:files ("*" (:exclude ...))= and let elpaca symlink =lisp/= as a whole
-directory — nested =.el= files would be invisible to autoload scanning. We have
-to symlink files individually.
+The walk is hard to avoid with Elpaca's current internals.
+=elpaca-generate-autoloads= and its siblings skip symlinked directories,
+so the simpler route of =:files ("*" (:exclude ...))= with a
+whole-directory symlink of =lisp/= would hide nested =.el= files from
+autoload scanning. Files have to be symlinked one by one.
 
-If upstream Elpaca ever grew the ability to follow directory symlinks the walks
-here could be shrunk or removed entirely.
+If Elpaca ever learns to follow directory symlinks, this walk could shrink
+or go away.
 
 * Regenerating the manual
 
