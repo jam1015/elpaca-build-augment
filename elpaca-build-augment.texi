@@ -64,12 +64,6 @@ Companion: audit against @samp{package.el}
 * Audit cache behavior::
 * Audit system requirements::
 
-Entry points
-
-* @samp{M-x elpaca-build-augment-audit}::
-* @samp{M-x elpaca-build-augment-audit-all}::
-* The @samp{elpaca-build-augment-audit-watch} list::
-
 Configuration
 
 * @samp{elpaca-build-augment-sources}::
@@ -229,43 +223,33 @@ style files@comma{} images@comma{} data files@comma{} templates.
 @node Entry points
 @section Entry points
 
-@menu
-* @samp{M-x elpaca-build-augment-audit}::
-* @samp{M-x elpaca-build-augment-audit-all}::
-* The @samp{elpaca-build-augment-audit-watch} list::
-@end menu
-
-@node @samp{M-x elpaca-build-augment-audit}
-@subsection @samp{M-x elpaca-build-augment-audit}
-
-Prompts for one package out of everything Elpaca currently has queued.
-Extracts the tarball under
+@itemize
+@item
+@strong{@samp{M-x elpaca-build-augment-audit}.} Prompts for one package out of
+everything Elpaca currently has queued. Extracts the tarball under
 @samp{<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/}
 and shows a one-row tabulated-list buffer with the diff.
 
-@node @samp{M-x elpaca-build-augment-audit-all}
-@subsection @samp{M-x elpaca-build-augment-audit-all}
+@item
+@strong{@samp{M-x elpaca-build-augment-audit-all}.} Iterates over every queued
+package. The tabulated-list buffer is sortable; sort by @samp{Status} to
+pull @samp{GAP} rows to the top. First run is slow (one tar fetch per
+package); later runs hit the on-disk cache.
 
-Iterates over every queued package. The tabulated-list buffer is
-sortable; sort by @samp{Status} to pull @samp{GAP} rows to the top. The first run
-is slow (one tar fetch per package); later runs hit the on-disk cache.
-
-@node The @samp{elpaca-build-augment-audit-watch} list
-@subsection The @samp{elpaca-build-augment-audit-watch} list
+@item
+@strong{@samp{elpaca-build-augment-audit-watch}.} A defcustom list of packages
+audited automatically after Elpaca finishes init. Each result is
+written as one line to @samp{*Messages*}@comma{} so if a future upgrade silently
+drops @samp{auctex.info} you see it the next time Emacs starts. Opt-in by
+design: the network fetch and tar extraction do not belong on every
+normal startup. The watch list is for packages you have been bitten
+by before.
 
 @lisp
 (setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
 (elpaca-build-augment-audit-enable)
 @end lisp
-
-Installs an @samp{elpaca-after-init-hook} that audits every package in the
-list once Elpaca finishes init. Each result is written as one line to
-@samp{*Messages*}@comma{} so if a future upgrade silently drops @samp{auctex.info} you
-see it the next time Emacs starts.
-
-Opt-in by design. The network fetch and tar extraction do not belong on
-every normal startup. The watch list is for packages you have been
-bitten by before.
+@end itemize
 
 @node Report columns
 @section Report columns

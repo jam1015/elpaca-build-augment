@@ -122,34 +122,28 @@ style files, images, data files, templates.
 
 ** Entry points
 
-*** =M-x elpaca-build-augment-audit=
+- *=M-x elpaca-build-augment-audit=.* Prompts for one package out of
+  everything Elpaca currently has queued. Extracts the tarball under
+  =<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/=
+  and shows a one-row tabulated-list buffer with the diff.
 
-Prompts for one package out of everything Elpaca currently has queued.
-Extracts the tarball under
-=<user-emacs-directory>/elpaca-build-augment-audit-cache/<pkg>-<version>/=
-and shows a one-row tabulated-list buffer with the diff.
+- *=M-x elpaca-build-augment-audit-all=.* Iterates over every queued
+  package. The tabulated-list buffer is sortable; sort by =Status= to
+  pull =GAP= rows to the top. First run is slow (one tar fetch per
+  package); later runs hit the on-disk cache.
 
-*** =M-x elpaca-build-augment-audit-all=
+- *=elpaca-build-augment-audit-watch=.* A defcustom list of packages
+  audited automatically after Elpaca finishes init. Each result is
+  written as one line to =*Messages*=, so if a future upgrade silently
+  drops =auctex.info= you see it the next time Emacs starts. Opt-in by
+  design: the network fetch and tar extraction do not belong on every
+  normal startup. The watch list is for packages you have been bitten
+  by before.
 
-Iterates over every queued package. The tabulated-list buffer is
-sortable; sort by =Status= to pull =GAP= rows to the top. The first run
-is slow (one tar fetch per package); later runs hit the on-disk cache.
-
-*** The =elpaca-build-augment-audit-watch= list
-
-#+begin_src elisp
-(setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
-(elpaca-build-augment-audit-enable)
-#+end_src
-
-Installs an =elpaca-after-init-hook= that audits every package in the
-list once Elpaca finishes init. Each result is written as one line to
-=*Messages*=, so if a future upgrade silently drops =auctex.info= you
-see it the next time Emacs starts.
-
-Opt-in by design. The network fetch and tar extraction do not belong on
-every normal startup. The watch list is for packages you have been
-bitten by before.
+  #+begin_src elisp
+  (setopt elpaca-build-augment-audit-watch '(auctex ess eat bongo))
+  (elpaca-build-augment-audit-enable)
+  #+end_src
 
 ** Report columns
 
