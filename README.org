@@ -107,10 +107,17 @@ below).
          :host github
          :repo "jam1015/elpaca-build-augment"
          :wait t)
+  ;; Optional configuration -- all have sensible defaults, uncomment
+  ;; only what you want to change.  See the "Configuration" section
+  ;; below for details.
+  ;;
+  ;; (setopt elpaca-build-augment-sources
+  ;;         elpaca-build-augment--sources-savannah)  ; default: emacsmirror
+  ;; (setopt elpaca-build-augment-cache-metadata nil) ; default: t
   (elpaca-build-augment-enable)
   ;; Optional: audit builds against package.el tarballs.  See TEST.org.
   (require 'elpaca-build-augment-audit)
-  (setq elpaca-build-augment-audit-watch '(auctex ess eat))
+  (setopt elpaca-build-augment-audit-watch '(auctex ess eat))
   (elpaca-build-augment-audit-enable))
 
 ;; -- Option A: use-package integration --
@@ -129,9 +136,70 @@ below).
 #+end_src
 
 On first use the library fetches GNU and NonGNU ELPA's =elpa-packages= files
-from Savannah into =<user-emacs-directory>/elpaca-build-augment-cache/=. No
-metadata is bundled with the package — the elisp does all the work of
-discovering per-package build structure.
+(by default from the emacsmirror GitHub mirrors) into
+=<user-emacs-directory>/elpaca-build-augment-cache/=. No metadata is bundled
+with the package — the elisp does all the work of discovering per-package
+build structure.
+
+* Configuration
+
+All options are plain =defcustom=s; set them with =setopt= (or via =M-x
+customize-group RET elpaca-build-augment=).
+
+** Metadata source: =elpaca-build-augment-sources=
+
+Where the =elpa-packages= files come from. Two presets are shipped:
+
+- =elpaca-build-augment--sources-emacsmirror= (default) — the =emacsmirror=
+  GitHub mirrors of =elpa.git= / =nongnu-elpa.git=. Backed by GitHub's CDN,
+  fast and stable.
+- =elpaca-build-augment--sources-savannah= — the upstream Savannah cgit
+  endpoints. Authoritative, but cgit is frequently overloaded and returns 502
+  error pages under traffic bursts. Opt in if you specifically want
+  first-source reads.
+
+You can also set the variable to an arbitrary alist to point at any other
+host (a local mirror, a corporate proxy, etc.). See the =defcustom= docstring
+for the plist shape.
+
+#+begin_src elisp
+;; Opt into Savannah upstream instead of emacsmirror.
+(setopt elpaca-build-augment-sources
+        elpaca-build-augment--sources-savannah)
+#+end_src
+
+** Metadata caching: =elpaca-build-augment-cache-metadata=
+
+Boolean, default =t=.
+
+- =t= — the fetched snapshots are persisted on disk under
+  =<user-emacs-directory>/elpaca-build-augment-cache/= and reused across
+  Emacs sessions. Call =M-x elpaca-build-augment-refresh= to pull fresh
+  copies.
+- =nil= — no disk cache. The snapshots are fetched once per Emacs session
+  into an in-memory index and reused for every package install in that
+  session; =M-x elpaca-build-augment-refresh= forces a refetch within a
+  session.
+
+Disk caching is recommended for normal use — the metadata changes slowly and
+a stale copy only costs you a build step or two on a newly-added field.
+Choose =nil= if you specifically want every Emacs session to start from fresh
+upstream metadata.
+
+#+begin_src elisp
+(setopt elpaca-build-augment-cache-metadata nil)
+#+end_src
+
+** Audit watch list: =elpaca-build-augment-audit-watch=
+
+List of package symbols that get an automatic parity report against
+=package.el= tarballs after Elpaca finishes building them. Only consulted
+when =(elpaca-build-augment-audit-enable)= has been called. See
+[[file:TEST.org][TEST.org]] for details.
+
+#+begin_src elisp
+(setopt elpaca-build-augment-audit-watch '(auctex ess eat))
+#+end_src
 
 ** Introspection
 

@@ -98,23 +98,51 @@ dir) so it survives package upgrades.  Populated on first use by
 fetching from upstream; refreshable via `elpaca-build-augment-refresh'."
   :type 'directory)
 
-(defcustom elpaca-build-augment-sources
-  ;; We fetch from the `emacsmirror' GitHub mirrors rather than directly
-  ;; from Savannah.  Savannah's cgit is frequently overloaded (502s from
-  ;; its "AI scraping proxies" load-shedding page) and its URL paths
-  ;; have shifted.  The emacsmirror repos are canonical read-only
-  ;; mirrors of the elpa.git / nongnu.git repos and are backed by
-  ;; GitHub's CDN -- fast and stable.
+(defconst elpaca-build-augment--sources-emacsmirror
   '((gnu
      :file "gnu-elpa-packages"
      :url "https://raw.githubusercontent.com/emacsmirror/gnu_elpa/refs/heads/main/elpa-packages")
     (nongnu
      :file "nongnu-elpa-packages"
      :url "https://raw.githubusercontent.com/emacsmirror/nongnu_elpa/refs/heads/main/elpa-packages"))
+  "emacsmirror GitHub mirrors of the GNU/NonGNU ELPA `elpa-packages' files.
+Default source set.  Backed by GitHub's CDN -- fast and stable.")
+
+(defconst elpaca-build-augment--sources-savannah
+  '((gnu
+     :file "gnu-elpa-packages"
+     :url "https://git.savannah.gnu.org/cgit/emacs/elpa.git/plain/elpa-packages")
+    (nongnu
+     :file "nongnu-elpa-packages"
+     :url "https://git.savannah.gnu.org/cgit/emacs/nongnu-elpa.git/plain/elpa-packages"))
+  "Upstream Savannah cgit sources for the `elpa-packages' files.
+Authoritative but frequently overloaded -- cgit returns 502s from its
+\"AI scraping proxies\" load-shedding page under traffic bursts, and
+historical URL paths have shifted.  Available as an opt-in.")
+
+(defcustom elpaca-build-augment-sources
+  elpaca-build-augment--sources-emacsmirror
   "Alist of (LABEL PLIST) describing ELPA metadata sources.
 PLIST keys: :file (basename cached under `elpaca-build-augment-cache-dir')
-and :url (upstream fetch location)."
-  :type '(alist :key-type symbol :value-type plist))
+and :url (upstream fetch location).  Defaults to the emacsmirror GitHub
+mirrors; Customize offers a Savannah preset or an arbitrary alist."
+  :type `(choice
+          (const :tag "emacsmirror GitHub mirrors (default, fast/stable)"
+                 ,elpaca-build-augment--sources-emacsmirror)
+          (const :tag "Savannah upstream (authoritative; may 502 under load)"
+                 ,elpaca-build-augment--sources-savannah)
+          (alist :tag "Custom alist"
+                 :key-type symbol :value-type plist)))
+
+(defcustom elpaca-build-augment-cache-metadata t
+  "If non-nil, persist fetched ELPA metadata snapshots on disk.
+With the default t, snapshots live under `elpaca-build-augment-cache-dir'
+and are reused across Emacs sessions until `elpaca-build-augment-refresh'
+is called.  With nil, no disk cache is kept: the metadata is fetched
+once per Emacs session into an in-memory index and reused for every
+package install in that session.  Call `elpaca-build-augment-refresh'
+to force a refetch within a session."
+  :type 'boolean)
 
 (defcustom elpaca-build-augment-exclude-regexps
   '("\\`\\.git/" "/\\.git/" "\\`\\.git\\'"
@@ -146,13 +174,28 @@ Populated lazily by `elpaca-build-augment--load-index'.")
                                                  elpaca-build-augment-cache-dir)))
             elpaca-build-augment-sources))
 
-(defun elpaca-build-augment--load-index ()
-  "Read cached snapshots into `elpaca-build-augment--index'.
-If a cached file is missing or doesn't look like an elpa-packages file
-(e.g. a 502 HTML page left behind by an earlier failed fetch), delete
-it and refetch before parsing.  This makes the cache self-healing: a
-transient upstream problem can't leave the user with a cache that
-crashes the hook on every subsequent package install."
+(defun elpaca-build-augment--fetch-entries (src)
+  "Fetch SRC's :url, validate, and return its parsed entries list.
+Signals on an invalid response (e.g. 502 HTML page) so bad data can't
+silently poison the in-memory index."
+  (let ((url (plist-get (cdr src) :url)))
+    (with-temp-buffer
+      (url-insert-file-contents url)
+      (goto-char (point-min))
+      (skip-chars-forward " \t\n\r")
+      (unless (eq (char-after) ?\;)
+        (error "elpaca-build-augment: upstream response from %s is not a valid elpa-packages file (likely an HTTP error page)"
+               url))
+      (goto-char (point-min))
+      (read (current-buffer)))))
+
+(defun elpaca-build-augment--load-index-from-disk ()
+  "Populate `--index' from on-disk snapshots, fetching if missing/invalid.
+Self-healing: snapshots that don't look like an elpa-packages file
+(e.g. a 502 HTML page left behind by an earlier failed fetch) are
+deleted before refetch, so a transient upstream problem can't leave
+the user with a cache that crashes the hook on every subsequent
+package install."
   (dolist (src elpaca-build-augment-sources)
     (let ((path (expand-file-name (plist-get (cdr src) :file)
                                   elpaca-build-augment-cache-dir)))
@@ -170,11 +213,24 @@ crashes the hook on every subsequent package install."
                          (insert-file-contents path)
                          (goto-char (point-min))
                          (read (current-buffer))))
-          (push (cons (car entry) entry) elpaca-build-augment--index)))))
+          (push (cons (car entry) entry) elpaca-build-augment--index))))))
+
+(defun elpaca-build-augment--load-index-from-network ()
+  "Populate `--index' by fetching every source directly, without disk cache."
+  (setq elpaca-build-augment--index nil)
+  (dolist (src elpaca-build-augment-sources)
+    (dolist (entry (elpaca-build-augment--fetch-entries src))
+      (push (cons (car entry) entry) elpaca-build-augment--index))))
+
+(defun elpaca-build-augment--load-index ()
+  "Populate `elpaca-build-augment--index' per the caching settings."
+  (if elpaca-build-augment-cache-metadata
+      (elpaca-build-augment--load-index-from-disk)
+    (elpaca-build-augment--load-index-from-network))
   elpaca-build-augment--index)
 
 (defun elpaca-build-augment--entry (pkg)
-  "Return the ELPA entry for PKG, loading the index if needed."
+  "Return the ELPA entry for PKG, loading the index if not already loaded."
   (unless elpaca-build-augment--index (elpaca-build-augment--load-index))
   (alist-get pkg elpaca-build-augment--index))
 
@@ -518,8 +574,22 @@ cache: `url-copy-file' saves whatever bytes come back, even an HTTP
   "Re-download the elpa-packages snapshots from upstream.
 Validates each response before overwriting the cache -- bad responses
 (e.g. Savannah's 502 error pages) are discarded, not saved, so a
-transient upstream failure can't poison the cache."
+transient upstream failure can't poison the cache.
+
+When `elpaca-build-augment-cache-metadata' is nil, no disk cache is in
+use; this command just refetches straight into the in-memory index."
   (interactive)
+  (cond
+   ((not elpaca-build-augment-cache-metadata)
+    (clrhash elpaca-build-augment--step-cache)
+    (elpaca-build-augment--load-index-from-network)
+    (message "elpaca-build-augment: refreshed %d entries (no disk cache)"
+             (length elpaca-build-augment--index)))
+   (t
+    (elpaca-build-augment--refresh-disk-cache))))
+
+(defun elpaca-build-augment--refresh-disk-cache ()
+  "Refetch snapshots into `elpaca-build-augment-cache-dir'."
   (make-directory elpaca-build-augment-cache-dir t)
   (dolist (src elpaca-build-augment-sources)
     (let* ((plist (cdr src))
