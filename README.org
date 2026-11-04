@@ -1,4 +1,11 @@
-#+TITLE: elpaca-build-augment
+#+TITLE: Elpaca Build Augment
+#+AUTHOR: Jordan Mandel
+#+LANGUAGE: en
+#+EXPORT_FILE_NAME: elpaca-build-augment.texi
+#+TEXINFO_DIR_CATEGORY: Emacs
+#+TEXINFO_DIR_TITLE: Elpaca Build Augment: (elpaca-build-augment).
+#+TEXINFO_DIR_DESC: Replay ELPA build steps under Elpaca.
+#+OPTIONS: ':t toc:t
 
 An extension for [[https://github.com/progfolio/elpaca][Elpaca]] that replays
 per-package build steps upstream package archives run on their build servers,
@@ -266,6 +273,21 @@ to symlink files individually.
 
 If upstream Elpaca ever grew the ability to follow directory symlinks the walks
 here could be shrunk or removed entirely.
+
+* Regenerating the manual
+
+The =elpaca-build-augment.info= file shipped with this repository is built
+from =README.org= via =ox-texinfo=. If you change the README, run
+
+#+begin_src sh
+make doc
+#+end_src
+
+and commit the updated =elpaca-build-augment.info= alongside your README
+change. The intermediate =.texi= is =.gitignore='d. Elpaca's default
+=:files= spec picks up =*.info= at the repository root automatically and
+its default build pipeline runs =elpaca--install-info=, so once the
+=.info= is present no recipe changes are needed to ship it.
 
 * License
 
