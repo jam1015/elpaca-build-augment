@@ -1,9 +1,9 @@
-#+TITLE: Elpaca Build Augment
+#+TITLE: elpaca-build-augment
 #+AUTHOR: Jordan Mandel
 #+LANGUAGE: en
 #+EXPORT_FILE_NAME: elpaca-build-augment.texi
 #+TEXINFO_DIR_CATEGORY: Emacs
-#+TEXINFO_DIR_TITLE: Elpaca Build Augment: (elpaca-build-augment).
+#+TEXINFO_DIR_TITLE: elpaca-build-augment: (elpaca-build-augment).
 #+TEXINFO_DIR_DESC: Replay ELPA build steps under Elpaca.
 #+OPTIONS: ':t toc:t
 

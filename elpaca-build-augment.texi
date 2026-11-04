@@ -1,19 +1,19 @@
 \input texinfo    @c -*- texinfo -*-
 @c %**start of header
 @setfilename elpaca-build-augment.info
-@settitle Elpaca Build Augment
+@settitle elpaca-build-augment
 @documentencoding UTF-8
 @documentlanguage en
 @c %**end of header
 
 @dircategory Emacs
 @direntry
-* Elpaca Build Augment: (elpaca-build-augment). Replay ELPA build steps under Elpaca.
+* elpaca-build-augment: (elpaca-build-augment). Replay ELPA build steps under Elpaca.
 @end direntry
 
 @finalout
 @titlepage
-@title Elpaca Build Augment
+@title elpaca-build-augment
 @author Jordan Mandel
 @end titlepage
 
@@ -21,7 +21,7 @@
 
 @ifnottex
 @node Top
-@top Elpaca Build Augment
+@top elpaca-build-augment
 
 An extension for @uref{https://github.com/progfolio/elpaca, Elpaca} that replays
 per-package build steps upstream package archives run on their build servers@comma{}
